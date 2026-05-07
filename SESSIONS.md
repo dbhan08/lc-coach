@@ -147,14 +147,17 @@ Completed: 2026-05-07.
 
 **Goal:** real README, real DEMO, RESUME generated, repo public.
 
-- [ ] README final pass: matches Advisor README's terse direct tone; one-command run; usage; screenshots/gifs
-- [ ] DEMO.md: reproducible end-to-end flow — install → load extension → ingest → open SpaceX-similar problem → start → 3 hints → done → see weak panel update → mock interview run
-- [ ] RESUME.md: STAR bullets + talking points + stack tags; gitignored
-- [ ] Verify `.gitignore` excludes `RESUME.md`, `.env`, `*.db`, `data/companies/raw/`
-- [ ] First push: `gh repo create lc-coach --public --source=. --remote=origin --push`
-- [ ] Topics: `python`, `fastapi`, `chrome-extension`, `claude-code`, `leetcode`, `recommender`, `spaced-repetition`
+- [x] README final pass: terse direct tone; one-command run up top; usage / how-it-works / stack / tests / roadmap.
+- [x] DEMO.md: reproducible end-to-end flow — install → start.sh → ingest → drill a problem with L1/L2 → finish attempt → see mastery shift → review + mock → /next?target=spacex with cold-start expansion → SM-2 wakes you up tomorrow.
+- [x] RESUME.md: 3 STAR bullets + 3 talking points (real tradeoff: Jaccard+difficulty over topic-distribution because tagging is lazy; real broke: SpaceX coverage was ~0 in public datasets so cold-start became load-bearing; future work) + stack tags. Gitignored.
+- [x] Verified `.gitignore` excludes `RESUME.md` (line 1), `.env`, `*.db` (catches `state.db` even at full path), `__pycache__/`, `*.egg-info/`, `.venv/`, `.pytest_cache/`, `data/companies/raw/`.
+- [x] Public repo at `https://github.com/dbhan08/lc-coach` (created in Session 1; auto-push set up).
+- [x] Topics applied: python, fastapi, chrome-extension, claude-code, leetcode, recommender, spaced-repetition.
+- [x] Tagged `v1.0.0` after Session 7 commit.
 
 **Done when:** repo is live, README has working run-it commands from a clean clone, DEMO.md walks through a real session end-to-end, RESUME.md exists locally and is not in git.
+
+Completed: 2026-05-07.
 
 ---
 
