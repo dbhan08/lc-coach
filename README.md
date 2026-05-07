@@ -2,7 +2,7 @@
 
 A personal LeetCode coach that lives in your browser. Click a hint button on any leetcode.com problem and get a Socratic hint without leaving the page.
 
-Status: **v0.5 (Session 1)** — hint flow works end-to-end. Pattern mastery, spaced repetition, and the company-similarity recommender land in sessions 2–7.
+Status: **v0.6 (Session 2)** — hint flow + full attempt logging with auto-captured Monaco code. Pattern mastery, spaced repetition, and the company-similarity recommender land in sessions 3–7.
 
 ## Run it
 
@@ -55,7 +55,8 @@ Python 3.9+, FastAPI, uvicorn, SQLite (stdlib), `claude` CLI (subprocess), Chrom
 
 ## Roadmap
 
-- Session 2 — Monaco editor code reading + full attempt logging
+- ~~Session 1 — Foundation: extension + service + working hint flow~~ ✓
+- ~~Session 2 — Monaco editor code reading + full attempt logging~~ ✓
 - Session 3 — Per-pattern Elo mastery model
 - Session 4 — Public company-tag ingest + SM-2 spaced repetition
 - Session 5 — Company similarity recommender + target-company workflow

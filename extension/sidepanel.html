@@ -25,6 +25,37 @@
       </div>
     </section>
 
+    <section id="attempt-card" class="card" hidden>
+      <div id="attempt-idle">
+        <div class="row-between">
+          <button id="start-attempt-btn" class="primary-btn">Start attempt</button>
+          <span class="muted small">tracks your hints + code + outcome</span>
+        </div>
+      </div>
+      <div id="attempt-active" hidden>
+        <div class="row-between">
+          <div>
+            <span class="muted small">Active —</span>
+            <span id="attempt-timer">0m 0s</span>
+          </div>
+          <button id="finish-attempt-btn" class="primary-btn">I'm done</button>
+        </div>
+      </div>
+      <div id="attempt-finishing" hidden>
+        <div class="muted small" style="margin-bottom: 6px">How did it go?</div>
+        <div class="outcome-row">
+          <label><input type="radio" name="outcome" value="solved" /> Solved</label>
+          <label><input type="radio" name="outcome" value="partial" /> Partial</label>
+          <label><input type="radio" name="outcome" value="stuck" /> Stuck</label>
+        </div>
+        <div class="row-between" style="margin-top: 8px">
+          <button id="submit-outcome-btn" class="primary-btn" disabled>Save attempt</button>
+          <button id="cancel-outcome-btn" class="ghost-btn">Cancel</button>
+        </div>
+        <div id="attempt-code-status" class="muted small" style="margin-top: 6px"></div>
+      </div>
+    </section>
+
     <section class="card">
       <div class="hint-buttons">
         <button data-level="1" class="hint-btn">

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
                     detail=f"problem '{body.slug}' not registered; POST /problems first",
                 )
             prior = db.get_recent_hints(conn, body.slug, limit=5)
+            active = db.get_active_attempt(conn, body.slug)
 
         prompt = build_hint_prompt(
             title=problem["title"],
@@ -84,9 +85,48 @@ def create_app() -> FastAPI:
                 level=body.level,
                 prompt=prompt,
                 response=response_text,
+                attempt_id=active["id"] if active else None,
             )
 
-        return HintOut(hint_id=hint_id, level=body.level, response=response_text)
+        return HintOut(
+            hint_id=hint_id,
+            level=body.level,
+            response=response_text,
+            attempt_id=active["id"] if active else None,
+        )
+
+    @app.post("/attempts/start", response_model=AttemptOut)
+    def attempt_start(body: AttemptStartIn) -> AttemptOut:
+        with db.connect() as conn:
+            problem = db.get_problem(conn, body.slug)
+            if problem is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"problem '{body.slug}' not registered; POST /problems first",
+                )
+            attempt = db.start_attempt(conn, problem_slug=body.slug)
+        return AttemptOut(**attempt)
+
+    @app.post("/attempts/done", response_model=AttemptOut)
+    def attempt_done(body: AttemptDoneIn) -> AttemptOut:
+        try:
+            with db.connect() as conn:
+                finished = db.finish_attempt(
+                    conn,
+                    attempt_id=body.attempt_id,
+                    outcome=body.outcome,
+                    code_snapshot=body.code_snapshot,
+                    language=body.language,
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return AttemptOut(**finished)
+
+    @app.get("/attempts/active", response_model=Optional[AttemptOut])
+    def attempt_active(slug: str) -> Optional[AttemptOut]:
+        with db.connect() as conn:
+            row = db.get_active_attempt(conn, slug)
+        return AttemptOut(**row) if row else None
 
     return app
 
@@ -120,6 +160,29 @@ class HintOut(BaseModel):
     hint_id: int
     level: int
     response: str
+    attempt_id: Optional[int] = None
+
+
+class AttemptStartIn(BaseModel):
+    slug: str = Field(..., min_length=1)
+
+
+class AttemptDoneIn(BaseModel):
+    attempt_id: int
+    outcome: Literal["solved", "partial", "stuck"]
+    code_snapshot: Optional[str] = None
+    language: Optional[str] = None
+
+
+class AttemptOut(BaseModel):
+    id: int
+    problem_slug: str
+    started_at: str
+    ended_at: Optional[str] = None
+    outcome: Optional[str] = None
+    code_snapshot: Optional[str] = None
+    language: Optional[str] = None
+    time_spent_seconds: Optional[int] = None
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`

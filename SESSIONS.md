@@ -42,14 +42,17 @@ Code-complete: 2026-05-06. Manual E2E verification + Completed timestamp pending
 
 **Goal:** Side panel reads the user's current Monaco-editor code; full attempt lifecycle (start → multiple hints → done) is captured in the database.
 
-- [ ] `extension/content.js`: hook into Monaco via `monaco.editor.getEditors()[0].getValue()` (with retry); poll on demand, not on every keystroke
-- [ ] Schema additions: `attempts(id PK, problem_slug FK, started_at, ended_at, outcome, code_snapshot, hints_used_json, time_spent_seconds)`
-- [ ] `POST /attempts/start`, `POST /attempts/done`, `GET /attempts/active?slug=X`
-- [ ] Side panel: "I'm starting" button (idempotent), running attempt indicator, "I'm done" form (outcome: solved/partial/stuck; pulls code from Monaco automatically)
-- [ ] Wire `/hint` to attach to current open attempt
-- [ ] Tests: full attempt lifecycle including multi-hint association
+- [x] Read Monaco from the side panel via `chrome.scripting.executeScript({world: "MAIN"})` calling `monaco.editor.getEditors()[0].getValue()` (chosen over content-script injection — cleaner permission model, no two-world bridge)
+- [x] Schema additions: `attempts(id PK, problem_slug FK, started_at, ended_at, outcome, code_snapshot, language, time_spent_seconds)` + `idx_attempts_slug_active` + `idx_hints_attempt`
+- [x] `POST /attempts/start` (idempotent), `POST /attempts/done`, `GET /attempts/active?slug=X`
+- [x] Side panel: Start attempt button, live timer (m/s), "I'm done" → outcome picker (solved/partial/stuck) → auto-fetch Monaco code → submit
+- [x] `/hint` automatically tags the hint with the active attempt's id when one is open (FK column was pre-declared in Session 1)
+- [x] Tests: 21 passing total; new coverage on attempt lifecycle, idempotent start, finish with code, hint→attempt association, validation errors
+- [x] Live-verified end-to-end via Playwright (Monaco extraction on real `leetcode.com/problems/two-sum` returned the C++ scaffolding) and curl (full lifecycle through running server)
 
 **Done when:** A full real attempt (start → 2 hints → done with code captured automatically from Monaco) writes a complete `attempts` row with associated hints. No copy-paste of code required.
+
+Completed: 2026-05-06.
 
 ---
 

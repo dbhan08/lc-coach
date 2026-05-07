@@ -1,6 +1,8 @@
 // Side panel logic.
-// Talks to content.js (in the active LeetCode tab) to read the current
-// problem, and to the local Python service on 127.0.0.1:8765 for hints.
+// Talks to content.js (for DOM scrape) and to chrome.scripting (for the
+// Monaco editor's current code) on the active LeetCode tab. Posts to the
+// local Python service on 127.0.0.1:8765 for problem registration, hints,
+// and attempt lifecycle.
 
 const SERVICE_BASE = "http://127.0.0.1:8765";
 
@@ -17,13 +19,26 @@ const els = {
   errorRetry: document.getElementById("error-retry"),
   refreshBtn: document.getElementById("refresh-btn"),
   hintButtons: document.querySelectorAll(".hint-btn"),
+  attemptCard: document.getElementById("attempt-card"),
+  attemptIdle: document.getElementById("attempt-idle"),
+  attemptActive: document.getElementById("attempt-active"),
+  attemptFinishing: document.getElementById("attempt-finishing"),
+  attemptTimer: document.getElementById("attempt-timer"),
+  startAttemptBtn: document.getElementById("start-attempt-btn"),
+  finishAttemptBtn: document.getElementById("finish-attempt-btn"),
+  submitOutcomeBtn: document.getElementById("submit-outcome-btn"),
+  cancelOutcomeBtn: document.getElementById("cancel-outcome-btn"),
+  attemptCodeStatus: document.getElementById("attempt-code-status"),
 };
 
 let currentProblem = null;
+let activeAttempt = null; // null | { id, started_at, ... }
+let timerInterval = null;
 let inflightHint = false;
 
+// --- UI helpers -----------------------------------------------------------
+
 function setStatusDot(state) {
-  // 'ok' | 'bad' | 'unknown'
   els.statusDot.className = "dot dot-" + state;
 }
 
@@ -62,6 +77,7 @@ function renderProblem(p) {
     els.problemLoaded.hidden = true;
     els.problemEmpty.hidden = false;
     disableHintButtons(true);
+    els.attemptCard.hidden = true;
     return;
   }
   els.problemEmpty.hidden = true;
@@ -85,7 +101,55 @@ function renderProblem(p) {
   });
 
   disableHintButtons(false);
+  els.attemptCard.hidden = false;
 }
+
+function renderAttemptState() {
+  els.attemptIdle.hidden = true;
+  els.attemptActive.hidden = true;
+  els.attemptFinishing.hidden = true;
+  if (!activeAttempt) {
+    els.attemptIdle.hidden = false;
+    stopTimer();
+  } else {
+    els.attemptActive.hidden = false;
+    startTimer();
+  }
+}
+
+function showFinishingUI() {
+  els.attemptIdle.hidden = true;
+  els.attemptActive.hidden = true;
+  els.attemptFinishing.hidden = false;
+  els.attemptCodeStatus.textContent = "";
+  els.submitOutcomeBtn.disabled = true;
+  document
+    .querySelectorAll('input[name="outcome"]')
+    .forEach((r) => (r.checked = false));
+}
+
+function startTimer() {
+  stopTimer();
+  if (!activeAttempt) return;
+  const startedAt = new Date(activeAttempt.started_at).getTime();
+  const tick = () => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const m = Math.floor(elapsed / 60);
+    const s = elapsed % 60;
+    els.attemptTimer.textContent = `${m}m ${s}s`;
+  };
+  tick();
+  timerInterval = setInterval(tick, 1000);
+}
+
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+
+// --- Service calls --------------------------------------------------------
 
 async function pingService() {
   try {
@@ -96,33 +160,10 @@ async function pingService() {
   } catch (err) {
     setStatusDot("bad");
     showError(
-      "Local service not reachable on 127.0.0.1:8765. Run `python -m lc_coach` in a terminal.",
+      "Local service not reachable on 127.0.0.1:8765. Run `./start.sh` (or `python -m lc_coach`) in a terminal.",
     );
     return false;
   }
-}
-
-async function loadCurrentProblem() {
-  clearError();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.startsWith("https://leetcode.com/problems/")) {
-    currentProblem = null;
-    renderProblem(null);
-    return;
-  }
-  let response;
-  try {
-    response = await chrome.tabs.sendMessage(tab.id, { type: "GET_PROBLEM" });
-  } catch (err) {
-    // Content script may not be injected yet (tab opened before extension load)
-    showError(
-      "Couldn't read the LeetCode page. Reload the LeetCode tab and try again.",
-    );
-    renderProblem(null);
-    return;
-  }
-  currentProblem = response;
-  renderProblem(response);
 }
 
 async function postProblemToService(p) {
@@ -132,7 +173,9 @@ async function postProblemToService(p) {
     body: JSON.stringify({
       slug: p.slug,
       title: p.title,
-      statement: p.statement || "(statement unavailable; reload the page after the description loads)",
+      statement:
+        p.statement ||
+        "(statement unavailable; reload the page after the description loads)",
       difficulty: p.difficulty || null,
       tags: p.tags || [],
     }),
@@ -141,6 +184,130 @@ async function postProblemToService(p) {
     throw new Error(`POST /problems failed: ${r.status} ${await r.text()}`);
   }
   return await r.json();
+}
+
+async function refreshActiveAttempt() {
+  if (!currentProblem || !currentProblem.slug) {
+    activeAttempt = null;
+    renderAttemptState();
+    return;
+  }
+  try {
+    const r = await fetch(
+      `${SERVICE_BASE}/attempts/active?slug=${encodeURIComponent(currentProblem.slug)}`,
+    );
+    if (r.ok) {
+      const body = await r.json();
+      activeAttempt = body || null;
+    } else {
+      activeAttempt = null;
+    }
+  } catch {
+    activeAttempt = null;
+  }
+  renderAttemptState();
+}
+
+async function startAttempt() {
+  if (!currentProblem || !currentProblem.slug) return;
+  clearError();
+  els.startAttemptBtn.disabled = true;
+  try {
+    await postProblemToService(currentProblem);
+    const r = await fetch(`${SERVICE_BASE}/attempts/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: currentProblem.slug }),
+    });
+    if (!r.ok) throw new Error(`status ${r.status}: ${await r.text()}`);
+    activeAttempt = await r.json();
+    renderAttemptState();
+  } catch (err) {
+    showError(err.message || String(err));
+  } finally {
+    els.startAttemptBtn.disabled = false;
+  }
+}
+
+async function getMonacoCode() {
+  // Read the user's current code from the LeetCode Monaco editor on the
+  // active tab. Runs in the page's MAIN world so it can touch the global
+  // `monaco` object the LeetCode bundle exposes.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return { error: "no active tab" };
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: () => {
+        try {
+          if (typeof monaco === "undefined") return { error: "monaco not loaded yet" };
+          const editors =
+            (monaco.editor.getEditors && monaco.editor.getEditors()) || [];
+          // Pick the first editor that actually has user-editable content.
+          for (const e of editors) {
+            try {
+              const v = e.getValue();
+              if (typeof v === "string" && v.length > 0) {
+                return { value: v, via: "getEditors" };
+              }
+            } catch {}
+          }
+          const models =
+            (monaco.editor.getModels && monaco.editor.getModels()) || [];
+          for (const m of models) {
+            try {
+              const v = m.getValue();
+              if (typeof v === "string" && v.length > 0) {
+                return { value: v, via: "getModels" };
+              }
+            } catch {}
+          }
+          return { error: "no monaco editors found" };
+        } catch (e) {
+          return { error: String(e && e.message ? e.message : e) };
+        }
+      },
+    });
+    return results?.[0]?.result || { error: "executeScript returned nothing" };
+  } catch (err) {
+    return { error: String(err && err.message ? err.message : err) };
+  }
+}
+
+async function submitOutcome() {
+  const radio = document.querySelector('input[name="outcome"]:checked');
+  if (!radio || !activeAttempt) return;
+  els.submitOutcomeBtn.disabled = true;
+  els.attemptCodeStatus.textContent = "Reading your code from the editor…";
+  const codeResult = await getMonacoCode();
+  let code = null;
+  if (codeResult && codeResult.value) {
+    code = codeResult.value;
+    els.attemptCodeStatus.textContent =
+      `Captured ${code.length} chars from the editor.`;
+  } else {
+    els.attemptCodeStatus.textContent =
+      `(Couldn't read editor — saving without code: ${codeResult?.error || "unknown"})`;
+  }
+  try {
+    const r = await fetch(`${SERVICE_BASE}/attempts/done`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attempt_id: activeAttempt.id,
+        outcome: radio.value,
+        code_snapshot: code,
+        language: null,
+      }),
+    });
+    if (!r.ok) throw new Error(`status ${r.status}: ${await r.text()}`);
+    activeAttempt = null;
+    renderAttemptState();
+  } catch (err) {
+    showError(err.message || String(err));
+    els.submitOutcomeBtn.disabled = false;
+  }
 }
 
 async function requestHint(level) {
@@ -176,6 +343,31 @@ async function requestHint(level) {
   }
 }
 
+async function loadCurrentProblem() {
+  clearError();
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url || !tab.url.startsWith("https://leetcode.com/problems/")) {
+    currentProblem = null;
+    activeAttempt = null;
+    renderProblem(null);
+    renderAttemptState();
+    return;
+  }
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(tab.id, { type: "GET_PROBLEM" });
+  } catch (err) {
+    showError(
+      "Couldn't read the LeetCode page. Reload the LeetCode tab and try again.",
+    );
+    renderProblem(null);
+    return;
+  }
+  currentProblem = response;
+  renderProblem(response);
+  await refreshActiveAttempt();
+}
+
 // --- Wiring ---------------------------------------------------------------
 
 els.hintButtons.forEach((btn) => {
@@ -195,13 +387,24 @@ els.errorRetry.addEventListener("click", async () => {
   if (ok) await loadCurrentProblem();
 });
 
-// Re-read the problem when the user switches tabs or activates the panel.
+els.startAttemptBtn.addEventListener("click", startAttempt);
+els.finishAttemptBtn.addEventListener("click", showFinishingUI);
+els.cancelOutcomeBtn.addEventListener("click", () => renderAttemptState());
+els.submitOutcomeBtn.addEventListener("click", submitOutcome);
+
+document.querySelectorAll('input[name="outcome"]').forEach((r) => {
+  r.addEventListener("change", () => {
+    els.submitOutcomeBtn.disabled = !document.querySelector(
+      'input[name="outcome"]:checked',
+    );
+  });
+});
+
 chrome.tabs.onActivated.addListener(() => loadCurrentProblem());
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener((_tabId, info) => {
   if (info.status === "complete") loadCurrentProblem();
 });
 
-// Boot.
 (async () => {
   await pingService();
   await loadCurrentProblem();

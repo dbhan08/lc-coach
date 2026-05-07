@@ -3,7 +3,7 @@
   "name": "lc-coach",
   "version": "0.1.0",
   "description": "Personal LeetCode coach: Socratic hints, mastery tracking, and target-company recommendations inline on leetcode.com.",
-  "permissions": ["sidePanel", "storage", "tabs"],
+  "permissions": ["sidePanel", "storage", "tabs", "scripting"],
   "host_permissions": [
     "https://leetcode.com/*",
     "http://127.0.0.1:8765/*"
