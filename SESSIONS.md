@@ -81,19 +81,22 @@ Completed: 2026-05-06.
 
 **Goal:** load and normalize public company question lists with confidence scoring; schedule problem reviews via SM-2.
 
-- [ ] `lc_coach/ingest.py`: fetch from 2-3 public GitHub repos (`krishnadey30/LeetCode-Questions-CompanyWise`, `MysteryVaibhav/leetcode_company_wise_questions`, etc.), parse to `(company, problem_slug, source, year, raw_freq)` records
-- [ ] Dedupe + multi-source confidence + recency weight `0.7^(2026 - year)` per mention
-- [ ] Schema: `companies(name PK, last_ingested_at)`, `company_problems(company FK, problem_slug FK, sources_json, confidence, latest_year)`
-- [ ] `POST /ingest`, `GET /companies`, `GET /companies/{name}` (top problems by confidence)
-- [ ] Cache raw under `data/companies/raw/`
-- [ ] `lc_coach/schedule.py`: SM-2 (ease factor, repetition count, next-due date) per (problem)
-- [ ] Schema: `reviews(problem_slug PK, ease, reps, interval_days, due_date)`
-- [ ] Outcome → quality grade q∈{0..5}; update on `/attempts/done`
-- [ ] `GET /due`
-- [ ] Side panel: "Due today" widget with click-through to leetcode URL
-- [ ] Tests: parsing, dedupe, confidence math, SM-2 advancement across multiple attempts
+- [x] Source survey done — confirmed all four candidate repos are 1.5+ years stale, snehasishroy 2026-02 is the freshest. Locked sources: snehasishroy (primary) + liquidslr 2025-06 (secondary) + a hand-curated SpaceX seed (15 problems drawn from interviewing.io / interviewquery / Glassdoor reports).
+- [x] `lc_coach/ingest.py`: pluggable Source class; SnehasishroySource + LiquidslrSource + ManualSpaceXSource; canonical company normalization; window normalization to {30d, 3mo, 6mo, older, all}.
+- [x] Cross-source + cross-window confidence: `confidence = Σ source_weight × window_weight` over (source, window) appearances. Caches raw CSVs under `~/.lc-coach/companies-raw/`.
+- [x] `lc_coach/spacex_seed.py`: 15 hand-curated problems with rationales (linked-list cycle, LRU cache, hashmap design, etc.). Confidence intentionally lower than aggregator hits.
+- [x] Schema: `companies(name PK, last_ingested_at)`, `company_problems(company FK, problem_slug, leetcode_id, title, difficulty, appearances_json, confidence)`, `reviews(problem_slug PK, ease, repetitions, interval_days, due_date, last_quality, last_reviewed_at)`.
+- [x] `lc_coach/schedule.py`: SM-2 (EF, repetitions, interval); outcome × max-hint-level → quality grade q∈{0..5} (solved-no-hints=5; solved-L1=4; solved-L2/3=3; partial-no-hints=3; partial-with-hints=2; stuck=0/1).
+- [x] `POST /ingest` (with `companies` allowlist); `GET /companies`, `GET /companies/{name}?limit=N`, `GET /due?limit=N`.
+- [x] `/attempts/done` now also runs SM-2 update; response wraps attempt + mastery updates + review state.
+- [x] Side panel: "Due for review" card; auto-hides if no due items; click-through to `leetcode.com/problems/<slug>`.
+- [x] 18 new pytest tests (52 total): ingest parsing for both source formats, normalization, aggregate dedup + filter, SM-2 quality mapping, EF floor, interval progression.
+- [x] Live ingest verified: 11 SpaceX-similar companies → 6,208 problems in ~28s. SpaceX surfaces 15 entries (manual seed + 1 dataset hit). Anduril surfaces real systems-y problems (number-of-islands, find-median-from-data-stream, course-schedule).
+- [x] Live SM-2 verified: stuck on Two-Sum → q=1, ease 2.5→1.96, interval=1d, due=tomorrow. /due correctly returns empty today (it's tomorrow's due-date, not today's).
 
 **Done when:** `/ingest` runs cleanly from empty DB, `/companies` returns ~50+ companies including SpaceX with confidence scores; completing a problem schedules an SM-2 review; `/due` populates correctly with mocked clock advancement.
+
+Completed: 2026-05-07.
 
 ---
 
