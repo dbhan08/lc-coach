@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>lc-coach</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <div id="status-dot" class="dot dot-unknown" title="local service status"></div>
+      <h1>lc-coach</h1>
+    </header>
+
+    <section id="problem-card" class="card">
+      <div id="problem-empty" class="muted">
+        Open a LeetCode problem page to begin.
+      </div>
+      <div id="problem-loaded" hidden>
+        <div class="problem-title-row">
+          <span id="problem-title"></span>
+          <span id="problem-difficulty" class="pill"></span>
+        </div>
+        <div id="problem-tags" class="tags"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hint-buttons">
+        <button data-level="1" class="hint-btn">
+          <span class="hint-level">L1</span>
+          <span class="hint-label">Pattern</span>
+        </button>
+        <button data-level="2" class="hint-btn">
+          <span class="hint-level">L2</span>
+          <span class="hint-label">Data structure</span>
+        </button>
+        <button data-level="3" class="hint-btn">
+          <span class="hint-level">L3</span>
+          <span class="hint-label">Decompose</span>
+        </button>
+      </div>
+      <div id="hint-output" class="hint-output muted">
+        Click a hint level when you're stuck. L1 → category only.
+        L2 → data structure. L3 → step-by-step decomposition (no code).
+      </div>
+    </section>
+
+    <section id="error-card" class="card error-card" hidden>
+      <strong>Something went wrong.</strong>
+      <div id="error-message"></div>
+      <button id="error-retry" class="ghost-btn">Retry</button>
+    </section>
+
+    <footer>
+      <button id="refresh-btn" class="ghost-btn" title="Re-read problem from page">
+        Refresh problem
+      </button>
+      <span class="muted">v0.5</span>
+    </footer>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
