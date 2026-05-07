@@ -55,6 +55,27 @@ CREATE TABLE IF NOT EXISTS hints (
 
 CREATE INDEX IF NOT EXISTS idx_hints_slug ON hints(problem_slug);
 CREATE INDEX IF NOT EXISTS idx_hints_attempt ON hints(attempt_id);
+
+CREATE TABLE IF NOT EXISTS patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS problem_patterns (
+    problem_slug TEXT NOT NULL,
+    pattern_id INTEGER NOT NULL,
+    PRIMARY KEY (problem_slug, pattern_id),
+    FOREIGN KEY (problem_slug) REFERENCES problems(slug),
+    FOREIGN KEY (pattern_id) REFERENCES patterns(id)
+);
+
+CREATE TABLE IF NOT EXISTS mastery (
+    pattern_id INTEGER PRIMARY KEY,
+    elo REAL NOT NULL,
+    n_attempts INTEGER NOT NULL DEFAULT 0,
+    last_updated TEXT,
+    FOREIGN KEY (pattern_id) REFERENCES patterns(id)
+);
 """
 
 VALID_OUTCOMES = ("solved", "partial", "stuck")
@@ -70,6 +91,14 @@ def init_db(path: Optional[Path] = None) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(target) as conn:
         conn.executescript(SCHEMA)
+        # Bootstrap the coarse-pattern taxonomy idempotently. Imported lazily
+        # to avoid a circular import at module load.
+        from lc_coach.mastery import COARSE_PATTERNS
+
+        conn.executemany(
+            "INSERT OR IGNORE INTO patterns (name) VALUES (?)",
+            [(p,) for p in COARSE_PATTERNS],
+        )
     return target
 
 
@@ -252,3 +281,175 @@ def get_attempt(conn: sqlite3.Connection, attempt_id: int) -> Optional[dict]:
         "SELECT * FROM attempts WHERE id = ?", (attempt_id,)
     ).fetchone()
     return dict(row) if row else None
+
+
+# --- Patterns + mastery ---------------------------------------------------
+
+
+def _pattern_id(conn: sqlite3.Connection, name: str) -> Optional[int]:
+    row = conn.execute(
+        "SELECT id FROM patterns WHERE name = ?", (name,)
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def assign_patterns_to_problem(
+    conn: sqlite3.Connection,
+    *,
+    slug: str,
+    pattern_names: list[str],
+) -> list[str]:
+    """Idempotently link a problem to its coarse patterns. Unknown pattern
+    names are dropped silently. Returns the patterns that were attached."""
+    attached: list[str] = []
+    for name in pattern_names:
+        pid = _pattern_id(conn, name)
+        if pid is None:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO problem_patterns (problem_slug, pattern_id) "
+            "VALUES (?, ?)",
+            (slug, pid),
+        )
+        attached.append(name)
+    return attached
+
+
+def get_problem_patterns(conn: sqlite3.Connection, slug: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT p.id, p.name FROM patterns p
+        JOIN problem_patterns pp ON pp.pattern_id = p.id
+        WHERE pp.problem_slug = ?
+        """,
+        (slug,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _max_hint_level_for_attempt(
+    conn: sqlite3.Connection, attempt_id: int
+) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(level), 0) FROM hints WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def update_mastery_for_attempt(
+    conn: sqlite3.Connection, attempt_id: int
+) -> list[dict]:
+    """Recompute pattern Elos for every pattern this attempt's problem is
+    tagged with. Returns one update record per pattern (for the response).
+
+    Idempotency note: this is meant to be called once per finished attempt.
+    Calling twice would double-count; the app layer is responsible for
+    invoking it at /attempts/done time only.
+    """
+    from lc_coach.mastery import (
+        INITIAL_PATTERN_ELO,
+        attempt_score,
+        elo_update,
+        problem_effective_elo,
+    )
+
+    attempt = conn.execute(
+        "SELECT * FROM attempts WHERE id = ?", (attempt_id,)
+    ).fetchone()
+    if attempt is None:
+        return []
+    if attempt["outcome"] is None:
+        # not finished yet — nothing to do
+        return []
+
+    problem = conn.execute(
+        "SELECT * FROM problems WHERE slug = ?",
+        (attempt["problem_slug"],),
+    ).fetchone()
+    if problem is None:
+        return []
+
+    patterns = get_problem_patterns(conn, attempt["problem_slug"])
+    if not patterns:
+        return []
+
+    p_elo = problem_effective_elo(problem["difficulty"])
+    max_level = _max_hint_level_for_attempt(conn, attempt_id)
+    score = attempt_score(attempt["outcome"], max_level)
+
+    out: list[dict] = []
+    for pat in patterns:
+        existing = conn.execute(
+            "SELECT elo, n_attempts FROM mastery WHERE pattern_id = ?",
+            (pat["id"],),
+        ).fetchone()
+        if existing is None:
+            old_elo = INITIAL_PATTERN_ELO
+            n_attempts = 0
+        else:
+            old_elo = float(existing["elo"])
+            n_attempts = int(existing["n_attempts"])
+
+        new_elo = elo_update(old_elo, p_elo, score)
+        new_n = n_attempts + 1
+
+        conn.execute(
+            """
+            INSERT INTO mastery (pattern_id, elo, n_attempts, last_updated)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(pattern_id) DO UPDATE SET
+                elo = excluded.elo,
+                n_attempts = excluded.n_attempts,
+                last_updated = excluded.last_updated
+            """,
+            (pat["id"], new_elo, new_n, _now_iso()),
+        )
+        out.append(
+            {
+                "pattern_id": pat["id"],
+                "pattern_name": pat["name"],
+                "old_elo": old_elo,
+                "new_elo": new_elo,
+                "delta": new_elo - old_elo,
+                "n_attempts": new_n,
+                "score": score,
+            }
+        )
+    return out
+
+
+def get_weakest_patterns(
+    conn: sqlite3.Connection, n: int = 5, *, attempted_only: bool = True
+) -> list[dict]:
+    """Return up to n patterns sorted by Elo ascending. By default only
+    includes patterns the user has attempted (otherwise the list is just
+    'every untouched pattern is at 1200', which is noise)."""
+    where = "WHERE m.n_attempts > 0" if attempted_only else ""
+    rows = conn.execute(
+        f"""
+        SELECT p.id, p.name, m.elo, m.n_attempts, m.last_updated
+        FROM patterns p
+        LEFT JOIN mastery m ON m.pattern_id = p.id
+        {where}
+        ORDER BY COALESCE(m.elo, ?) ASC
+        LIMIT ?
+        """,
+        (1200.0, n),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_full_mastery(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT p.id, p.name,
+               COALESCE(m.elo, 1200.0) AS elo,
+               COALESCE(m.n_attempts, 0) AS n_attempts,
+               m.last_updated
+        FROM patterns p
+        LEFT JOIN mastery m ON m.pattern_id = p.id
+        ORDER BY p.name
+        """,
+    ).fetchall()
+    return [dict(r) for r in rows]

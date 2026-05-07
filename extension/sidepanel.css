@@ -231,3 +231,25 @@ footer {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+
+.mastery-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  font-size: 12px;
+}
+.mastery-row .name { color: var(--fg); }
+.mastery-row .elo {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--fg);
+}
+.mastery-row .n {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mastery-row .delta-up { color: var(--easy); font-weight: 600; }
+.mastery-row .delta-down { color: var(--hard); font-weight: 600; }

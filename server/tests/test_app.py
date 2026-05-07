@@ -100,11 +100,13 @@ def test_attempt_lifecycle_via_api(tmp_db):
             },
         )
         assert r.status_code == 200, r.text
-        finished = r.json()
+        body = r.json()
+        finished = body["attempt"]
         assert finished["outcome"] == "solved"
         assert finished["ended_at"] is not None
         assert finished["code_snapshot"] == "def two_sum(...): ..."
         assert finished["language"] == "python"
+        assert isinstance(body["mastery_updates"], list)
 
         # active is gone
         assert c.get("/attempts/active", params={"slug": "two-sum"}).json() is None

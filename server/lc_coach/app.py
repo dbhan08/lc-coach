@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from lc_coach import db
 from lc_coach.coach import CoachError, build_hint_prompt, claude_p
+from lc_coach.mastery import map_leetcode_tags_to_patterns
 
 
 def create_app() -> FastAPI:
@@ -42,6 +43,10 @@ def create_app() -> FastAPI:
                 difficulty=body.difficulty,
                 tags=body.tags,
             )
+            patterns = map_leetcode_tags_to_patterns(body.tags or [])
+            attached = db.assign_patterns_to_problem(
+                conn, slug=body.slug, pattern_names=patterns
+            )
             stored = db.get_problem(conn, body.slug)
         assert stored is not None
         return ProblemOut(**{
@@ -49,6 +54,7 @@ def create_app() -> FastAPI:
             "title": stored["title"],
             "difficulty": stored.get("difficulty"),
             "tags": stored.get("tags", []),
+            "patterns": attached,
             "first_seen": stored["first_seen"],
         })
 
@@ -107,8 +113,8 @@ def create_app() -> FastAPI:
             attempt = db.start_attempt(conn, problem_slug=body.slug)
         return AttemptOut(**attempt)
 
-    @app.post("/attempts/done", response_model=AttemptOut)
-    def attempt_done(body: AttemptDoneIn) -> AttemptOut:
+    @app.post("/attempts/done", response_model=AttemptDoneOut)
+    def attempt_done(body: AttemptDoneIn) -> AttemptDoneOut:
         try:
             with db.connect() as conn:
                 finished = db.finish_attempt(
@@ -118,15 +124,33 @@ def create_app() -> FastAPI:
                     code_snapshot=body.code_snapshot,
                     language=body.language,
                 )
+                mastery_updates = db.update_mastery_for_attempt(
+                    conn, body.attempt_id
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return AttemptOut(**finished)
+        return AttemptDoneOut(
+            attempt=AttemptOut(**finished),
+            mastery_updates=[MasteryUpdate(**u) for u in mastery_updates],
+        )
 
     @app.get("/attempts/active", response_model=Optional[AttemptOut])
     def attempt_active(slug: str) -> Optional[AttemptOut]:
         with db.connect() as conn:
             row = db.get_active_attempt(conn, slug)
         return AttemptOut(**row) if row else None
+
+    @app.get("/weak", response_model=list[PatternMastery])
+    def weak(n: int = 5) -> list[PatternMastery]:
+        with db.connect() as conn:
+            rows = db.get_weakest_patterns(conn, n=n)
+        return [PatternMastery(**r) for r in rows]
+
+    @app.get("/mastery", response_model=list[PatternMastery])
+    def mastery_full() -> list[PatternMastery]:
+        with db.connect() as conn:
+            rows = db.get_full_mastery(conn)
+        return [PatternMastery(**r) for r in rows]
 
     return app
 
@@ -147,6 +171,7 @@ class ProblemOut(BaseModel):
     title: str
     difficulty: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
+    patterns: list[str] = Field(default_factory=list)
     first_seen: str
 
 
@@ -183,6 +208,29 @@ class AttemptOut(BaseModel):
     code_snapshot: Optional[str] = None
     language: Optional[str] = None
     time_spent_seconds: Optional[int] = None
+
+
+class MasteryUpdate(BaseModel):
+    pattern_id: int
+    pattern_name: str
+    old_elo: float
+    new_elo: float
+    delta: float
+    n_attempts: int
+    score: float
+
+
+class AttemptDoneOut(BaseModel):
+    attempt: AttemptOut
+    mastery_updates: list[MasteryUpdate] = Field(default_factory=list)
+
+
+class PatternMastery(BaseModel):
+    id: int
+    name: str
+    elo: Optional[float] = None
+    n_attempts: int = 0
+    last_updated: Optional[str] = None
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`

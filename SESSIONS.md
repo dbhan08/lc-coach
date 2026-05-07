@@ -60,16 +60,20 @@ Completed: 2026-05-06.
 
 **Goal:** track per-pattern strength via Elo updated from attempt outcomes; surface weakest patterns in the side panel.
 
-- [ ] Pattern taxonomy (~20 LeetCode tags): arrays, hashing, two-pointer, sliding-window, monotonic-stack, binary-search, bfs/dfs, union-find, topological-sort, trie, segment-tree, heap, dp, greedy, backtracking, bit-manip, math, design, graph, string
-- [ ] Schema: `patterns(id PK, name UNIQUE)`, `problem_patterns(problem_slug FK, pattern_id FK)`, `mastery(pattern_id PK, elo, n_attempts, last_updated)`
-- [ ] Problem→pattern mapping: scrape LeetCode tags from DOM where available; LLM-tag the unknown remainder via `claude -p` (cached)
-- [ ] `lc_coach/mastery.py`: Elo math (K=24); attempt outcome × hint level → score in [0, 1]
-- [ ] Update on every `/attempts/done`
-- [ ] `GET /weak?n=5`, `GET /strong?n=5`
-- [ ] Side panel: "Your weakest patterns" widget at top
-- [ ] Tests: Elo math, score mapping, idempotence, end-to-end with multiple attempts
+- [x] Pattern taxonomy: 20 coarse buckets in `mastery.py:COARSE_PATTERNS` (arrays, hashing, string, two-pointer, sliding-window, monotonic-stack, binary-search, bfs-dfs, graph, union-find, topological-sort, trie, segment-tree, heap, dp, greedy, backtracking, bit-manip, math, design)
+- [x] Schema: `patterns`, `problem_patterns`, `mastery` tables; bootstrapped from `COARSE_PATTERNS` on `init_db`
+- [x] Problem→pattern mapping: `mastery.TAG_TO_PATTERNS` translates ~50 raw LeetCode tag names to coarse buckets; happens automatically inside `POST /problems`. Unknown tags drop silently. (LLM-tagging fallback deferred — current coverage is sufficient for the seed problems.)
+- [x] `lc_coach/mastery.py`: K=24 Elo, score = clamp(base − 0.1 × max_hint_level), problem effective Elo by difficulty (Easy=1100/Med=1500/Hard=1900)
+- [x] `db.update_mastery_for_attempt()` called automatically on every `/attempts/done`; uses MAX(hint level on this attempt) for the penalty
+- [x] `GET /weak?n=5` (attempted-only, sorted asc), `GET /mastery` (full table)
+- [x] `/attempts/done` response now wraps the attempt + a `mastery_updates[]` array with old → new Elo and delta per pattern
+- [x] Side panel: "Weakest patterns" card at top; refreshes after each attempt completion
+- [x] 13 new pytest tests (34 total): Elo math, score mapping, expected-score symmetry, tag mapping, end-to-end mastery shift, repeated-attempts compounding
+- [x] Live integration verified: two-sum (Easy, solved×2) → arrays/hashing → 1217; course-schedule (Medium, stuck/stuck/partial) → bfs-dfs/graph/topological-sort → 1201
 
 **Done when:** Five attempts with mixed outcomes shift Elos in expected directions; "weakest patterns" widget renders a sensible ranking.
+
+Completed: 2026-05-06.
 
 ---
 

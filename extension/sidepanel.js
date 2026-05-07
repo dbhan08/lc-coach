@@ -29,6 +29,8 @@ const els = {
   submitOutcomeBtn: document.getElementById("submit-outcome-btn"),
   cancelOutcomeBtn: document.getElementById("cancel-outcome-btn"),
   attemptCodeStatus: document.getElementById("attempt-code-status"),
+  masteryList: document.getElementById("mastery-list"),
+  masteryMeta: document.getElementById("mastery-meta"),
 };
 
 let currentProblem = null;
@@ -186,6 +188,46 @@ async function postProblemToService(p) {
   return await r.json();
 }
 
+async function refreshMastery() {
+  try {
+    const r = await fetch(`${SERVICE_BASE}/weak?n=5`);
+    if (!r.ok) throw new Error(`status ${r.status}`);
+    const rows = await r.json();
+    if (!rows.length) {
+      els.masteryList.classList.add("muted");
+      els.masteryList.textContent =
+        "No attempts yet — finish one to start tracking.";
+      els.masteryMeta.textContent = "";
+      return;
+    }
+    els.masteryList.classList.remove("muted");
+    els.masteryList.innerHTML = "";
+    rows.forEach((row) => {
+      const div = document.createElement("div");
+      div.className = "mastery-row";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = row.name;
+      const elo = document.createElement("span");
+      elo.className = "elo";
+      elo.textContent = Math.round(row.elo ?? 1200);
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = `${row.n_attempts}×`;
+      div.appendChild(name);
+      div.appendChild(elo);
+      div.appendChild(n);
+      els.masteryList.appendChild(div);
+    });
+    const totalAttempts = rows.reduce((a, b) => a + (b.n_attempts || 0), 0);
+    els.masteryMeta.textContent = `${totalAttempts} attempt${totalAttempts === 1 ? "" : "s"} logged`;
+  } catch (err) {
+    els.masteryList.classList.add("muted");
+    els.masteryList.textContent = "(mastery unavailable)";
+    els.masteryMeta.textContent = "";
+  }
+}
+
 async function refreshActiveAttempt() {
   if (!currentProblem || !currentProblem.slug) {
     activeAttempt = null;
@@ -304,6 +346,7 @@ async function submitOutcome() {
     if (!r.ok) throw new Error(`status ${r.status}: ${await r.text()}`);
     activeAttempt = null;
     renderAttemptState();
+    refreshMastery();
   } catch (err) {
     showError(err.message || String(err));
     els.submitOutcomeBtn.disabled = false;
@@ -408,4 +451,5 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
 (async () => {
   await pingService();
   await loadCurrentProblem();
+  refreshMastery();
 })();
