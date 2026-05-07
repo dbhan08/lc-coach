@@ -312,3 +312,23 @@ footer {
   white-space: nowrap;
 }
 .next-headline a:hover { text-decoration: underline; }
+
+.coach-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.coach-btn {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  transition: border 0.1s;
+}
+.coach-btn:hover:not(:disabled) { border-color: var(--accent); }
+.coach-btn:disabled { opacity: 0.5; cursor: progress; }

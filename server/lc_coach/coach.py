@@ -98,3 +98,35 @@ def build_hint_prompt(
         statement=statement.strip(),
         prior_hints_block=_format_prior_hints(prior_hints or []),
     )
+
+
+def build_review_prompt(
+    *,
+    title: str,
+    statement: str,
+    difficulty: Optional[str],
+    code: str,
+    language: Optional[str] = None,
+) -> str:
+    template = _load_template("code_review.txt")
+    return template.format(
+        title=title,
+        difficulty=difficulty or "unknown",
+        statement=statement.strip(),
+        language=(language or "unspecified").strip(),
+        code=code.strip() or "(no code provided)",
+    )
+
+
+def build_mock_prompt(
+    *,
+    title: str,
+    statement: str,
+    difficulty: Optional[str],
+) -> str:
+    template = _load_template("mock_interview.txt")
+    return template.format(
+        title=title,
+        difficulty=difficulty or "unknown",
+        statement=statement.strip(),
+    )

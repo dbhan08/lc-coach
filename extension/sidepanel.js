@@ -14,6 +14,8 @@ const els = {
   problemDifficulty: document.getElementById("problem-difficulty"),
   problemTags: document.getElementById("problem-tags"),
   hintOutput: document.getElementById("hint-output"),
+  reviewBtn: document.getElementById("review-btn"),
+  mockBtn: document.getElementById("mock-btn"),
   errorCard: document.getElementById("error-card"),
   errorMessage: document.getElementById("error-message"),
   errorRetry: document.getElementById("error-retry"),
@@ -505,6 +507,83 @@ async function submitOutcome() {
   }
 }
 
+async function requestReview() {
+  if (!currentProblem || !currentProblem.slug) {
+    showError("No problem loaded.");
+    return;
+  }
+  if (inflightHint) return;
+  inflightHint = true;
+  clearError();
+  els.reviewBtn.disabled = true;
+  els.mockBtn.disabled = true;
+  setHintOutput(null, { withSpinner: true });
+  try {
+    await postProblemToService(currentProblem);
+    const codeResult = await getMonacoCode();
+    const code = codeResult?.value || "";
+    if (!code) {
+      throw new Error(
+        "Couldn't read your code from the editor — make sure the LeetCode tab is the active one.",
+      );
+    }
+    const r = await fetch(`${SERVICE_BASE}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slug: currentProblem.slug,
+        code,
+        language: null,
+      }),
+    });
+    if (!r.ok) {
+      throw new Error(`POST /review failed: ${r.status} ${await r.text()}`);
+    }
+    const body = await r.json();
+    setHintOutput(`[code review · ${code.length} chars submitted]\n\n${body.response}`);
+  } catch (err) {
+    showError(err.message || String(err));
+    setHintOutput(null);
+  } finally {
+    inflightHint = false;
+    els.reviewBtn.disabled = false;
+    els.mockBtn.disabled = false;
+  }
+}
+
+async function requestMock() {
+  if (!currentProblem || !currentProblem.slug) {
+    showError("No problem loaded.");
+    return;
+  }
+  if (inflightHint) return;
+  inflightHint = true;
+  clearError();
+  els.reviewBtn.disabled = true;
+  els.mockBtn.disabled = true;
+  setHintOutput(null, { withSpinner: true });
+  try {
+    await postProblemToService(currentProblem);
+    const r = await fetch(`${SERVICE_BASE}/mock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: currentProblem.slug }),
+    });
+    if (!r.ok) {
+      throw new Error(`POST /mock failed: ${r.status} ${await r.text()}`);
+    }
+    const body = await r.json();
+    setHintOutput(`[mock interview round]\n\n${body.response}`);
+  } catch (err) {
+    showError(err.message || String(err));
+    setHintOutput(null);
+  } finally {
+    inflightHint = false;
+    els.reviewBtn.disabled = false;
+    els.mockBtn.disabled = false;
+  }
+}
+
 async function requestHint(level) {
   if (!currentProblem || !currentProblem.slug) {
     showError("No problem loaded.");
@@ -586,6 +665,9 @@ els.startAttemptBtn.addEventListener("click", startAttempt);
 els.finishAttemptBtn.addEventListener("click", showFinishingUI);
 els.cancelOutcomeBtn.addEventListener("click", () => renderAttemptState());
 els.submitOutcomeBtn.addEventListener("click", submitOutcome);
+
+els.reviewBtn.addEventListener("click", requestReview);
+els.mockBtn.addEventListener("click", requestMock);
 
 els.nextBtn.addEventListener("click", requestNext);
 els.targetInput.addEventListener("input", () => {

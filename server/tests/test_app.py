@@ -166,3 +166,63 @@ def test_attempt_start_unknown_problem_404(tmp_db):
     with _client(tmp_db) as c:
         r = c.post("/attempts/start", json={"slug": "nope"})
     assert r.status_code == 404
+
+
+def test_review_round_trip(tmp_db, monkeypatch):
+    from lc_coach import app as app_mod
+
+    captured = {}
+
+    def fake_claude_p(prompt, **kw):
+        captured["prompt"] = prompt
+        captured["kw"] = kw
+        return "review: looks fine; complexity is O(n)."
+
+    monkeypatch.setattr(app_mod, "claude_p", fake_claude_p)
+
+    with _client(tmp_db) as c:
+        _register_problem(c)
+        r = c.post(
+            "/review",
+            json={
+                "slug": "two-sum",
+                "code": "def two_sum(nums, target): return []",
+                "language": "python",
+            },
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["slug"] == "two-sum"
+    assert "looks fine" in body["response"]
+    # Code round-trip into the prompt that gets shipped to claude
+    assert "def two_sum(nums, target): return []" in captured["prompt"]
+
+
+def test_review_unknown_problem_404(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.post("/review", json={"slug": "ghost", "code": "x = 1"})
+    assert r.status_code == 404
+
+
+def test_mock_round_trip(tmp_db, monkeypatch):
+    from lc_coach import app as app_mod
+
+    monkeypatch.setattr(
+        app_mod,
+        "claude_p",
+        lambda p, **kw: "Round 1. Pose the problem... Clarifying questions...",
+    )
+
+    with _client(tmp_db) as c:
+        _register_problem(c)
+        r = c.post("/mock", json={"slug": "two-sum"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["slug"] == "two-sum"
+    assert "Pose the problem" in body["response"]
+
+
+def test_mock_unknown_problem_404(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.post("/mock", json={"slug": "ghost"})
+    assert r.status_code == 404

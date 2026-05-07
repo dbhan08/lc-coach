@@ -9,7 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from lc_coach import db
-from lc_coach.coach import CoachError, build_hint_prompt, claude_p
+from lc_coach.coach import (
+    CoachError,
+    build_hint_prompt,
+    build_mock_prompt,
+    build_review_prompt,
+    claude_p,
+)
 from lc_coach.ingest import aggregate, default_sources, normalize_company
 from lc_coach.mastery import map_leetcode_tags_to_patterns
 from lc_coach.recommend import (
@@ -196,6 +202,48 @@ def create_app() -> FastAPI:
         with db.connect() as conn:
             rows = db.get_due_problems(conn, limit=limit)
         return [DueRow(**r) for r in rows]
+
+    @app.post("/review", response_model=ReviewCodeOut)
+    def review_code(body: ReviewCodeIn) -> ReviewCodeOut:
+        with db.connect() as conn:
+            problem = db.get_problem(conn, body.slug)
+        if problem is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"problem '{body.slug}' not registered; POST /problems first",
+            )
+        prompt = build_review_prompt(
+            title=problem["title"],
+            statement=problem["statement"],
+            difficulty=problem.get("difficulty"),
+            code=body.code,
+            language=body.language,
+        )
+        try:
+            response_text = claude_p(prompt, model=body.model)
+        except CoachError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return ReviewCodeOut(slug=body.slug, response=response_text)
+
+    @app.post("/mock", response_model=MockOut)
+    def mock_interview(body: MockIn) -> MockOut:
+        with db.connect() as conn:
+            problem = db.get_problem(conn, body.slug)
+        if problem is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"problem '{body.slug}' not registered; POST /problems first",
+            )
+        prompt = build_mock_prompt(
+            title=problem["title"],
+            statement=problem["statement"],
+            difficulty=problem.get("difficulty"),
+        )
+        try:
+            response_text = claude_p(prompt, model=body.model)
+        except CoachError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return MockOut(slug=body.slug, response=response_text)
 
     @app.get("/similar/{name}", response_model=list[SimilarCompany])
     def similar(name: str, k: int = 5) -> list[SimilarCompany]:
@@ -447,6 +495,28 @@ class DueRow(BaseModel):
     ease: float
     last_quality: Optional[int] = None
     last_reviewed_at: Optional[str] = None
+
+
+class ReviewCodeIn(BaseModel):
+    slug: str
+    code: str
+    language: Optional[str] = None
+    model: Optional[str] = None
+
+
+class ReviewCodeOut(BaseModel):
+    slug: str
+    response: str
+
+
+class MockIn(BaseModel):
+    slug: str
+    model: Optional[str] = None
+
+
+class MockOut(BaseModel):
+    slug: str
+    response: str
 
 
 class SimilarCompany(BaseModel):

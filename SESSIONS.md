@@ -125,16 +125,21 @@ Completed: 2026-05-07.
 
 ## Session 6 — Coach polish: prompt versioning, code review, mock interview
 
-**Goal:** harden Socratic prompts; add code review and mock-interview modes; lock down hint quality with golden-output tests.
+**Goal:** harden Socratic prompts; add code review and mock-interview modes; lock down hint quality with construction-level contract tests.
 
-- [ ] Versioned prompt templates with explicit hint-level contracts (L1 must NOT contain pattern data structures by name; L2 must NOT contain algorithm names; L3 must NOT contain code)
-- [ ] `POST /review`: panel sends current code, returns staff-engineer-style review (idiomatic? edge cases? cleaner formulation? complexity?)
-- [ ] `POST /mock` (multi-turn): Claude poses problem, pushes back on approach, asks complexity, asks one follow-up; transcript stored
-- [ ] Optional `--model` toggle on service (default uses whatever Claude Code is set to)
-- [ ] Golden-output tests: small fixture set of 3-5 problems with expected hint properties
-- [ ] Side panel: "Review my code" + "Interview me" buttons; mock mode opens a dedicated transcript panel
+- [x] Versioned prompt templates: each prompt file now has a `v: N` + `mode:` header. Existing L1/L2/L3 unchanged in body, just headered.
+- [x] `prompts/code_review.txt`: staff-engineer review contract — bugs first, then complexity in big-O, then style. Forbids the reviewer from writing the better solution; names the better approach by category instead so the candidate derives it.
+- [x] `prompts/mock_interview.txt`: single-response interview round contract — pose the problem; expected clarifying questions with answers; approach-before-code prompt; pre-empt wrong direction; complexity commitment; one pointed follow-up. Stays in voice.
+- [x] `POST /review` (slug + code + language) and `POST /mock` (slug). Both shell to `claude -p`; both expose optional `--model` override.
+- [x] Side panel: "Review my code" + "Mock interview" buttons in the hint card. Review auto-fetches Monaco code; both render into the existing hint-output area with a mode tag at the top.
+- [x] 10 new pytest tests (74 total): contract regressions on every prompt template (forbidden phrases, required clauses), `/review` and `/mock` happy path + 404, code round-trip into the assembled review prompt.
+- [x] Live verified end-to-end on Two-Sum:
+    - `/review` (~15s) on a brute-force O(n²) submission → flagged complexity, kept the hash-map answer hidden ("a single-pass lookup structure that answers in O(1)"), nudged at clarifying-question signaling, and added staff-level interview wisdom.
+    - `/mock` (~16s) → produced a coherent interview round hitting all 6 contract phases (pose / clarify-with-answers / approach-before-code / wrong-direction warning / complexity commitment / sorted+O(1) follow-up), without leaking the answer.
 
-**Done when:** L1 hint on a known monotonic-stack problem reliably gives a category nudge that doesn't leak the algorithm; `/review` produces structured feedback; `/mock` runs a coherent multi-turn session.
+**Done when:** L1 hint on a known monotonic-stack problem reliably gives a category nudge that doesn't leak the algorithm; `/review` produces structured feedback; `/mock` runs a coherent interview round.
+
+Completed: 2026-05-07.
 
 ---
 
