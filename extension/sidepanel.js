@@ -31,6 +31,9 @@ const els = {
   attemptCodeStatus: document.getElementById("attempt-code-status"),
   masteryList: document.getElementById("mastery-list"),
   masteryMeta: document.getElementById("mastery-meta"),
+  dueCard: document.getElementById("due-card"),
+  dueList: document.getElementById("due-list"),
+  dueMeta: document.getElementById("due-meta"),
 };
 
 let currentProblem = null;
@@ -228,6 +231,40 @@ async function refreshMastery() {
   }
 }
 
+async function refreshDue() {
+  try {
+    const r = await fetch(`${SERVICE_BASE}/due?limit=5`);
+    if (!r.ok) throw new Error(`status ${r.status}`);
+    const rows = await r.json();
+    if (!rows.length) {
+      els.dueCard.hidden = true;
+      return;
+    }
+    els.dueCard.hidden = false;
+    els.dueList.innerHTML = "";
+    const today = new Date().toISOString().slice(0, 10);
+    rows.forEach((r) => {
+      const div = document.createElement("div");
+      div.className = "due-row";
+      const a = document.createElement("a");
+      a.href = `https://leetcode.com/problems/${r.problem_slug}/`;
+      a.target = "_blank";
+      a.textContent = r.title || r.problem_slug;
+      const when = document.createElement("span");
+      when.className = "due-when";
+      const dueDate = r.due_date || "";
+      when.textContent = dueDate <= today ? "due now" : dueDate.slice(5);
+      if (dueDate < today) when.classList.add("due-overdue");
+      div.appendChild(a);
+      div.appendChild(when);
+      els.dueList.appendChild(div);
+    });
+    els.dueMeta.textContent = `${rows.length} problem${rows.length === 1 ? "" : "s"}`;
+  } catch {
+    els.dueCard.hidden = true;
+  }
+}
+
 async function refreshActiveAttempt() {
   if (!currentProblem || !currentProblem.slug) {
     activeAttempt = null;
@@ -347,6 +384,7 @@ async function submitOutcome() {
     activeAttempt = null;
     renderAttemptState();
     refreshMastery();
+    refreshDue();
   } catch (err) {
     showError(err.message || String(err));
     els.submitOutcomeBtn.disabled = false;
@@ -452,4 +490,5 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
   await pingService();
   await loadCurrentProblem();
   refreshMastery();
+  refreshDue();
 })();

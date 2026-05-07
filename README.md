@@ -2,7 +2,7 @@
 
 A personal LeetCode coach that lives in your browser. Click a hint button on any leetcode.com problem and get a Socratic hint without leaving the page.
 
-Status: **v0.7 (Session 3)** — hint flow + attempt logging + per-pattern Elo mastery surfaced in the side panel. Spaced repetition and the company-similarity recommender land in sessions 4–7.
+Status: **v0.8 (Session 4)** — hint flow + attempt logging + per-pattern Elo mastery + public company-tag ingest (snehasishroy + liquidslr + hand-curated SpaceX seed) + SM-2 spaced repetition. Company-similarity recommender + coach polish + final ship in sessions 5–7.
 
 ## Run it
 
@@ -58,7 +58,7 @@ Python 3.9+, FastAPI, uvicorn, SQLite (stdlib), `claude` CLI (subprocess), Chrom
 - ~~Session 1 — Foundation: extension + service + working hint flow~~ ✓
 - ~~Session 2 — Monaco editor code reading + full attempt logging~~ ✓
 - ~~Session 3 — Per-pattern Elo mastery model~~ ✓
-- Session 4 — Public company-tag ingest + SM-2 spaced repetition
+- ~~Session 4 — Public company-tag ingest + SM-2 spaced repetition~~ ✓
 - Session 5 — Company similarity recommender + target-company workflow
 - Session 6 — Code review + mock-interview modes; prompt-quality golden tests
 - Session 7 — Docs, demo, public ship

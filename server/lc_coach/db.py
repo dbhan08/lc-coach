@@ -76,6 +76,37 @@ CREATE TABLE IF NOT EXISTS mastery (
     last_updated TEXT,
     FOREIGN KEY (pattern_id) REFERENCES patterns(id)
 );
+
+CREATE TABLE IF NOT EXISTS companies (
+    name TEXT PRIMARY KEY,
+    last_ingested_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS company_problems (
+    company TEXT NOT NULL,
+    problem_slug TEXT NOT NULL,
+    leetcode_id INTEGER,
+    title TEXT,
+    difficulty TEXT,
+    appearances_json TEXT,
+    confidence REAL NOT NULL,
+    PRIMARY KEY (company, problem_slug),
+    FOREIGN KEY (company) REFERENCES companies(name)
+);
+CREATE INDEX IF NOT EXISTS idx_company_problems_company ON company_problems(company);
+CREATE INDEX IF NOT EXISTS idx_company_problems_slug ON company_problems(problem_slug);
+
+CREATE TABLE IF NOT EXISTS reviews (
+    problem_slug TEXT PRIMARY KEY,
+    ease REAL NOT NULL DEFAULT 2.5,
+    repetitions INTEGER NOT NULL DEFAULT 0,
+    interval_days INTEGER NOT NULL DEFAULT 0,
+    due_date TEXT,
+    last_quality INTEGER,
+    last_reviewed_at TEXT,
+    FOREIGN KEY (problem_slug) REFERENCES problems(slug)
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_due ON reviews(due_date);
 """
 
 VALID_OUTCOMES = ("solved", "partial", "stuck")
@@ -451,5 +482,205 @@ def get_full_mastery(conn: sqlite3.Connection) -> list[dict]:
         LEFT JOIN mastery m ON m.pattern_id = p.id
         ORDER BY p.name
         """,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Companies + ingest ---------------------------------------------------
+
+
+def store_aggregated_companies(
+    conn: sqlite3.Connection, aggregated: dict
+) -> dict:
+    """Persist the output of `ingest.aggregate()`. Returns counts.
+
+    The aggregated input shape is {company: {slug: CompanyProblemRow}} where
+    each row has `appearances` as a set of (source_id, window) tuples. We
+    serialize appearances as a JSON list-of-lists.
+    """
+    now = _now_iso()
+    n_companies = 0
+    n_problems = 0
+    for company, rows in aggregated.items():
+        if not rows:
+            continue
+        conn.execute(
+            """
+            INSERT INTO companies (name, last_ingested_at) VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET last_ingested_at = excluded.last_ingested_at
+            """,
+            (company, now),
+        )
+        n_companies += 1
+        for row in rows.values():
+            appearances = sorted(list(row.appearances))
+            conn.execute(
+                """
+                INSERT INTO company_problems
+                  (company, problem_slug, leetcode_id, title, difficulty,
+                   appearances_json, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company, problem_slug) DO UPDATE SET
+                  leetcode_id = COALESCE(excluded.leetcode_id, company_problems.leetcode_id),
+                  title = CASE WHEN length(excluded.title) > 0 THEN excluded.title ELSE company_problems.title END,
+                  difficulty = COALESCE(excluded.difficulty, company_problems.difficulty),
+                  appearances_json = excluded.appearances_json,
+                  confidence = excluded.confidence
+                """,
+                (
+                    company,
+                    row.slug,
+                    row.leetcode_id,
+                    row.title,
+                    row.difficulty,
+                    json.dumps([list(t) for t in appearances]),
+                    float(row.confidence),
+                ),
+            )
+            n_problems += 1
+    return {"companies": n_companies, "problems": n_problems}
+
+
+def get_companies_with_counts(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT c.name, c.last_ingested_at, COUNT(cp.problem_slug) AS n_problems,
+               SUM(cp.confidence) AS total_confidence
+        FROM companies c
+        LEFT JOIN company_problems cp ON cp.company = c.name
+        GROUP BY c.name
+        ORDER BY n_problems DESC, c.name
+        """,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_company_problems(
+    conn: sqlite3.Connection, company: str, limit: int = 25
+) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT problem_slug, leetcode_id, title, difficulty,
+               appearances_json, confidence
+        FROM company_problems
+        WHERE company = ?
+        ORDER BY confidence DESC, title
+        LIMIT ?
+        """,
+        (company, limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["appearances"] = json.loads(d.pop("appearances_json") or "[]")
+        except json.JSONDecodeError:
+            d["appearances"] = []
+        out.append(d)
+    return out
+
+
+# --- Spaced repetition (SM-2) ---------------------------------------------
+# `_max_hint_level_for_attempt` is shared with the mastery code above.
+
+
+def update_review_for_attempt(
+    conn: sqlite3.Connection, attempt_id: int
+) -> Optional[dict]:
+    """Apply one SM-2 step for the problem this attempt belonged to.
+
+    Returns a dict describing the new review state, or None if the attempt
+    isn't finished or the problem doesn't exist.
+    """
+    from datetime import date
+
+    from lc_coach.schedule import (
+        INITIAL_EASE,
+        ReviewState,
+        next_due_date,
+        quality_for_attempt,
+        update_review,
+    )
+
+    attempt = conn.execute(
+        "SELECT * FROM attempts WHERE id = ?", (attempt_id,)
+    ).fetchone()
+    if attempt is None or attempt["outcome"] is None:
+        return None
+    slug = attempt["problem_slug"]
+
+    existing = conn.execute(
+        "SELECT ease, repetitions, interval_days FROM reviews WHERE problem_slug = ?",
+        (slug,),
+    ).fetchone()
+    state = (
+        ReviewState(
+            ease=float(existing["ease"]),
+            repetitions=int(existing["repetitions"]),
+            interval_days=int(existing["interval_days"]),
+        )
+        if existing
+        else ReviewState()
+    )
+
+    max_level = _max_hint_level_for_attempt(conn, attempt_id)
+    q = quality_for_attempt(attempt["outcome"], max_level)
+    new_state = update_review(state, q)
+    today = date.today()
+    due = next_due_date(today, new_state.interval_days)
+
+    conn.execute(
+        """
+        INSERT INTO reviews
+          (problem_slug, ease, repetitions, interval_days, due_date,
+           last_quality, last_reviewed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(problem_slug) DO UPDATE SET
+          ease = excluded.ease,
+          repetitions = excluded.repetitions,
+          interval_days = excluded.interval_days,
+          due_date = excluded.due_date,
+          last_quality = excluded.last_quality,
+          last_reviewed_at = excluded.last_reviewed_at
+        """,
+        (
+            slug,
+            new_state.ease,
+            new_state.repetitions,
+            new_state.interval_days,
+            due.isoformat(),
+            q,
+            _now_iso(),
+        ),
+    )
+
+    return {
+        "problem_slug": slug,
+        "quality": q,
+        "ease": new_state.ease,
+        "repetitions": new_state.repetitions,
+        "interval_days": new_state.interval_days,
+        "due_date": due.isoformat(),
+    }
+
+
+def get_due_problems(
+    conn: sqlite3.Connection, today: Optional[str] = None, limit: int = 20
+) -> list[dict]:
+    from datetime import date
+
+    today_str = today or date.today().isoformat()
+    rows = conn.execute(
+        """
+        SELECT r.problem_slug, p.title, p.difficulty,
+               r.due_date, r.interval_days, r.repetitions, r.ease,
+               r.last_quality, r.last_reviewed_at
+        FROM reviews r
+        LEFT JOIN problems p ON p.slug = r.problem_slug
+        WHERE r.due_date <= ?
+        ORDER BY r.due_date ASC, r.last_reviewed_at ASC
+        LIMIT ?
+        """,
+        (today_str, limit),
     ).fetchall()
     return [dict(r) for r in rows]

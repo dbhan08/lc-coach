@@ -253,3 +253,26 @@ footer {
 }
 .mastery-row .delta-up { color: var(--easy); font-weight: 600; }
 .mastery-row .delta-down { color: var(--hard); font-weight: 600; }
+
+.due-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.due-row a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.due-row a:hover { text-decoration: underline; }
+.due-row .due-when {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.due-row .due-overdue { color: var(--hard); font-weight: 600; }

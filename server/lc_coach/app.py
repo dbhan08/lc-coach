@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from lc_coach import db
 from lc_coach.coach import CoachError, build_hint_prompt, claude_p
+from lc_coach.ingest import aggregate, default_sources
 from lc_coach.mastery import map_leetcode_tags_to_patterns
 
 
@@ -127,11 +128,13 @@ def create_app() -> FastAPI:
                 mastery_updates = db.update_mastery_for_attempt(
                     conn, body.attempt_id
                 )
+                review = db.update_review_for_attempt(conn, body.attempt_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return AttemptDoneOut(
             attempt=AttemptOut(**finished),
             mastery_updates=[MasteryUpdate(**u) for u in mastery_updates],
+            review=ReviewOut(**review) if review else None,
         )
 
     @app.get("/attempts/active", response_model=Optional[AttemptOut])
@@ -151,6 +154,41 @@ def create_app() -> FastAPI:
         with db.connect() as conn:
             rows = db.get_full_mastery(conn)
         return [PatternMastery(**r) for r in rows]
+
+    @app.post("/ingest", response_model=IngestOut)
+    def ingest(body: IngestIn) -> IngestOut:
+        sources = default_sources()
+        try:
+            aggregated = aggregate(
+                sources, companies_filter=body.companies
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"ingest failed: {exc}")
+        with db.connect() as conn:
+            counts = db.store_aggregated_companies(conn, aggregated)
+        return IngestOut(
+            companies=counts["companies"],
+            problems=counts["problems"],
+            requested=list(body.companies) if body.companies else None,
+        )
+
+    @app.get("/companies", response_model=list[CompanyRow])
+    def list_companies() -> list[CompanyRow]:
+        with db.connect() as conn:
+            rows = db.get_companies_with_counts(conn)
+        return [CompanyRow(**r) for r in rows]
+
+    @app.get("/companies/{name}", response_model=list[CompanyProblemRow])
+    def company_problems(name: str, limit: int = 25) -> list[CompanyProblemRow]:
+        with db.connect() as conn:
+            rows = db.get_company_problems(conn, name, limit=limit)
+        return [CompanyProblemRow(**r) for r in rows]
+
+    @app.get("/due", response_model=list[DueRow])
+    def due(limit: int = 20) -> list[DueRow]:
+        with db.connect() as conn:
+            rows = db.get_due_problems(conn, limit=limit)
+        return [DueRow(**r) for r in rows]
 
     return app
 
@@ -220,9 +258,19 @@ class MasteryUpdate(BaseModel):
     score: float
 
 
+class ReviewOut(BaseModel):
+    problem_slug: str
+    quality: int
+    ease: float
+    repetitions: int
+    interval_days: int
+    due_date: str
+
+
 class AttemptDoneOut(BaseModel):
     attempt: AttemptOut
     mastery_updates: list[MasteryUpdate] = Field(default_factory=list)
+    review: Optional[ReviewOut] = None
 
 
 class PatternMastery(BaseModel):
@@ -231,6 +279,44 @@ class PatternMastery(BaseModel):
     elo: Optional[float] = None
     n_attempts: int = 0
     last_updated: Optional[str] = None
+
+
+class IngestIn(BaseModel):
+    companies: Optional[list[str]] = None  # canonical names; None = all
+
+
+class IngestOut(BaseModel):
+    companies: int
+    problems: int
+    requested: Optional[list[str]] = None
+
+
+class CompanyRow(BaseModel):
+    name: str
+    last_ingested_at: Optional[str] = None
+    n_problems: int = 0
+    total_confidence: Optional[float] = None
+
+
+class CompanyProblemRow(BaseModel):
+    problem_slug: str
+    leetcode_id: Optional[int] = None
+    title: Optional[str] = None
+    difficulty: Optional[str] = None
+    appearances: list[list[str]] = Field(default_factory=list)
+    confidence: float
+
+
+class DueRow(BaseModel):
+    problem_slug: str
+    title: Optional[str] = None
+    difficulty: Optional[str] = None
+    due_date: Optional[str] = None
+    interval_days: int
+    repetitions: int
+    ease: float
+    last_quality: Optional[int] = None
+    last_reviewed_at: Optional[str] = None
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`
