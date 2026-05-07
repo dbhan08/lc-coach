@@ -34,6 +34,16 @@ const els = {
   dueCard: document.getElementById("due-card"),
   dueList: document.getElementById("due-list"),
   dueMeta: document.getElementById("due-meta"),
+  targetInput: document.getElementById("target-input"),
+  targetOptions: document.getElementById("target-options"),
+  targetMeta: document.getElementById("target-meta"),
+  targetStatus: document.getElementById("target-status"),
+  nextBtn: document.getElementById("next-btn"),
+  nextResult: document.getElementById("next-result"),
+  nextLink: document.getElementById("next-link"),
+  nextDifficulty: document.getElementById("next-difficulty"),
+  nextRationale: document.getElementById("next-rationale"),
+  nextSimilar: document.getElementById("next-similar"),
 };
 
 let currentProblem = null;
@@ -228,6 +238,110 @@ async function refreshMastery() {
     els.masteryList.classList.add("muted");
     els.masteryList.textContent = "(mastery unavailable)";
     els.masteryMeta.textContent = "";
+  }
+}
+
+function normalizeCompanyClient(raw) {
+  return (raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function refreshTargets() {
+  try {
+    const r = await fetch(`${SERVICE_BASE}/companies`);
+    if (!r.ok) throw new Error(`status ${r.status}`);
+    const rows = await r.json();
+    els.targetOptions.innerHTML = "";
+    rows.forEach((row) => {
+      const opt = document.createElement("option");
+      opt.value = row.name;
+      opt.label = `${row.name} (${row.n_problems})`;
+      els.targetOptions.appendChild(opt);
+    });
+    els.targetMeta.textContent = `${rows.length} ingested`;
+  } catch {
+    els.targetMeta.textContent = "(companies unavailable)";
+  }
+  // Restore last-used target
+  try {
+    const stored = await chrome.storage.local.get("target");
+    if (stored.target && !els.targetInput.value) {
+      els.targetInput.value = stored.target;
+    }
+  } catch {}
+  els.nextBtn.disabled = !els.targetInput.value.trim();
+}
+
+function setTargetStatus(text, { isError = false } = {}) {
+  if (!text) {
+    els.targetStatus.hidden = true;
+    els.targetStatus.textContent = "";
+    els.targetStatus.style.color = "";
+    return;
+  }
+  els.targetStatus.hidden = false;
+  els.targetStatus.textContent = text;
+  els.targetStatus.style.color = isError ? "var(--hard)" : "";
+}
+
+function renderNextResult(body) {
+  els.nextResult.hidden = false;
+  els.nextLink.href = body.leetcode_url;
+  els.nextLink.textContent = body.title || body.slug;
+  els.nextDifficulty.className = "pill";
+  if (body.difficulty) {
+    els.nextDifficulty.textContent = body.difficulty;
+    els.nextDifficulty.classList.add(body.difficulty.toLowerCase());
+  } else {
+    els.nextDifficulty.textContent = "?";
+  }
+  els.nextRationale.textContent = body.rationale || "";
+  if (body.cold_start_used && body.similar_companies?.length) {
+    const top = body.similar_companies
+      .slice(0, 3)
+      .map((s) => `${s.name} (${s.score.toFixed(2)})`)
+      .join(", ");
+    els.nextSimilar.textContent = `cold-start expansion: pool drew from ${top}`;
+  } else {
+    els.nextSimilar.textContent = "";
+  }
+}
+
+async function requestNext() {
+  const raw = els.targetInput.value.trim();
+  const target = normalizeCompanyClient(raw);
+  if (!target) return;
+  try {
+    await chrome.storage.local.set({ target });
+  } catch {}
+  els.nextBtn.disabled = true;
+  els.nextResult.hidden = true;
+  setTargetStatus("Looking up… (may auto-ingest if not in DB; ~5–30s on first hit)");
+  try {
+    const r = await fetch(
+      `${SERVICE_BASE}/next?target=${encodeURIComponent(target)}&auto_ingest=true`,
+    );
+    if (!r.ok) {
+      const detail = await r.text();
+      throw new Error(`HTTP ${r.status}: ${detail}`);
+    }
+    const body = await r.json();
+    setTargetStatus(
+      body.cold_start_used
+        ? `target pool: ${body.target_pool_size} (cold-start expansion engaged)`
+        : `target pool: ${body.target_pool_size}`,
+    );
+    renderNextResult(body);
+    refreshTargets();
+  } catch (err) {
+    setTargetStatus(err.message || String(err), { isError: true });
+  } finally {
+    els.nextBtn.disabled = !els.targetInput.value.trim();
   }
 }
 
@@ -473,6 +587,17 @@ els.finishAttemptBtn.addEventListener("click", showFinishingUI);
 els.cancelOutcomeBtn.addEventListener("click", () => renderAttemptState());
 els.submitOutcomeBtn.addEventListener("click", submitOutcome);
 
+els.nextBtn.addEventListener("click", requestNext);
+els.targetInput.addEventListener("input", () => {
+  els.nextBtn.disabled = !els.targetInput.value.trim();
+});
+els.targetInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && els.targetInput.value.trim()) {
+    e.preventDefault();
+    requestNext();
+  }
+});
+
 document.querySelectorAll('input[name="outcome"]').forEach((r) => {
   r.addEventListener("change", () => {
     els.submitOutcomeBtn.disabled = !document.querySelector(
@@ -491,4 +616,5 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
   await loadCurrentProblem();
   refreshMastery();
   refreshDue();
+  refreshTargets();
 })();

@@ -276,3 +276,39 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 .due-row .due-overdue { color: var(--hard); font-weight: 600; }
+
+.target-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.target-row input {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.target-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.next-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.next-headline a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-headline a:hover { text-decoration: underline; }

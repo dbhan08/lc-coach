@@ -102,19 +102,24 @@ Completed: 2026-05-07.
 
 ## Session 5 — Company similarity recommender + target workflow
 
-**Goal:** rank companies by profile similarity; expand thin pools via cold-start fallback; recommend a single next problem with rationale.
+**Goal:** rank companies by profile similarity; expand thin pools via cold-start fallback; recommend a single next problem with rationale; enable "any company you specify" via auto-ingest.
 
-- [ ] Per-company topic distribution: normalized vector over the ~20 patterns
-- [ ] Per-company difficulty distribution: `[easy%, medium%, hard%]`
-- [ ] Similarity score: weighted cosine on topic + cosine on difficulty + recency-weighted Jaccard on questions
-- [ ] `lc_coach/recommend.py`: `similar_companies(target, k=5)`, `next_problem(target, user_state)` returning (slug, rationale)
-- [ ] Cold-start rule: target with <100 high-confidence problems → expand pool to target ∪ top-k neighbors
-- [ ] Selection: `α * weak_pattern_score + β * due_score + γ * pool_membership - δ * recently_attempted`
-- [ ] `GET /similar/{name}`, `GET /next?target=X`
-- [ ] Side panel: target-company selector (defaults to SpaceX); "Next problem" button → opens LeetCode URL in new tab; rationale shown ("from Tesla, hits union-find — your weakest, due for review")
-- [ ] Tests: similarity, cold-start expansion, recommender ranking with synthetic state
+- [x] Per-company difficulty distribution: `[easy%, medium%, hard%]` (normalized).
+- [x] Similarity = `α · Jaccard(question_sets) + β · cosine(difficulty_dist)` with α=0.7, β=0.3. Topic-distribution term deferred to v2 — most ingested problems aren't yet pattern-tagged (tagging is lazy on `/problems` POST), so the weak-pattern bonus applies per-candidate at scoring time instead of in the company-level vector.
+- [x] `lc_coach/recommend.py`: `rank_similar`, `expand_pool`, `pick_next`. Cold-start gate `n_problems < 30` triggers similar-company expansion; similar-company entries are confidence-scaled by their similarity score so closer neighbors rank above distant ones.
+- [x] Selection score: `W_POOL · pool_conf + W_WEAK · weak_hit + W_DUE · due_hit − W_RECENT · recently_attempted`. Rationale assembled from which clauses triggered.
+- [x] `GET /similar/{name}` and `GET /next?target=X&auto_ingest=true`. When the target isn't in the DB, /next runs `aggregate(...)` for just that company on the fly so the user can target *any* company without a manual ingest step.
+- [x] Side panel: target-company input with autocomplete from `/companies`; persists last selection via chrome.storage.local; Enter or Next-problem button calls `/next?auto_ingest=true`; result shows title (link to leetcode.com), difficulty pill, rationale, and — when cold-start is engaged — the top similar companies the pool drew from.
+- [x] 12 new pytest tests (64 total): difficulty-distribution math, identical-vs-disjoint similarity, rank excludes self, cold-start gate, pool expansion deduping with target-wins, weak-pattern lift, due-bonus, recent-attempt penalty, empty-pool handling, DB profile round-trip.
+- [x] Live verified end-to-end:
+    - `/similar/spacex` → tesla 0.38, nvidia 0.32, apple 0.31, palantir 0.30, blue-origin 0.30 — defense/aerospace + systems cluster
+    - `/similar/anduril` → tesla 0.38, palantir 0.38, nvidia 0.36, apple 0.34, microsoft 0.30 — same cluster
+    - `/next?target=spacex` → Minimum Path Sum (Medium), cold-start engaged (pool size 15 < 30)
+    - `/next?target=apple` → LRU Cache (Medium), no cold-start (pool size 382)
 
 **Done when:** `/similar/spacex` returns plausible neighbors (Tesla / Anduril / Apple-systems / Microsoft / NVIDIA-flavored, not Two Sigma); `/next?target=spacex` returns a sensible problem with a one-line rationale.
+
+Completed: 2026-05-07.
 
 ---
 

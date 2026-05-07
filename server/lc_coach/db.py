@@ -684,3 +684,102 @@ def get_due_problems(
         (today_str, limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- Recommender support queries -----------------------------------------
+
+
+def load_all_company_profiles(conn: sqlite3.Connection) -> dict:
+    """Build {company_name: CompanyProfile} from company_problems.
+
+    Profile holds the set of slugs (for Jaccard) and a tally of difficulty
+    counts (for the difficulty-distribution cosine).
+    """
+    from lc_coach.recommend import CompanyProfile
+
+    rows = conn.execute(
+        "SELECT company, problem_slug, difficulty FROM company_problems"
+    ).fetchall()
+    profiles: dict[str, CompanyProfile] = {}
+    for r in rows:
+        company = r["company"]
+        prof = profiles.get(company)
+        if prof is None:
+            prof = CompanyProfile(name=company)
+            profiles[company] = prof
+        prof.slugs.add(r["problem_slug"])
+        diff = (r["difficulty"] or "").strip()
+        if diff in ("Easy", "Medium", "Hard"):
+            prof.difficulty_counts[diff] = prof.difficulty_counts.get(diff, 0) + 1
+    return profiles
+
+
+def get_pool_entries(conn: sqlite3.Connection, company: str) -> list:
+    from lc_coach.recommend import PoolEntry
+
+    rows = conn.execute(
+        """
+        SELECT problem_slug, title, difficulty, confidence
+        FROM company_problems
+        WHERE company = ?
+        ORDER BY confidence DESC
+        """,
+        (company,),
+    ).fetchall()
+    return [
+        PoolEntry(
+            slug=r["problem_slug"],
+            company=company,
+            confidence=float(r["confidence"]),
+            title=r["title"],
+            difficulty=r["difficulty"],
+        )
+        for r in rows
+    ]
+
+
+def get_problem_pattern_map(
+    conn: sqlite3.Connection, slugs: list[str]
+) -> dict[str, list[str]]:
+    """For the slugs we've actually registered + tagged, return a map
+    {slug: [pattern_name, ...]}. Slugs without a row in problem_patterns are
+    omitted — the caller treats absence as 'no pattern info'."""
+    if not slugs:
+        return {}
+    placeholders = ",".join("?" * len(slugs))
+    rows = conn.execute(
+        f"""
+        SELECT pp.problem_slug, p.name AS pattern_name
+        FROM problem_patterns pp
+        JOIN patterns p ON p.id = pp.pattern_id
+        WHERE pp.problem_slug IN ({placeholders})
+        """,
+        slugs,
+    ).fetchall()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["problem_slug"], []).append(r["pattern_name"])
+    return out
+
+
+def get_recent_attempt_slugs(
+    conn: sqlite3.Connection, *, days: int = 7
+) -> set[str]:
+    """Slugs the user has attempted in the recent past — used to de-emphasize
+    repeats in the recommender."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT problem_slug FROM attempts
+        WHERE started_at >= datetime('now', ?)
+        """,
+        (f"-{int(days)} days",),
+    ).fetchall()
+    return {r["problem_slug"] for r in rows}
+
+
+def get_weakest_pattern_names(
+    conn: sqlite3.Connection, *, n: int = 3
+) -> list[str]:
+    """Names only — for the recommender's weak-pattern bonus."""
+    rows = get_weakest_patterns(conn, n=n)
+    return [r["name"] for r in rows]

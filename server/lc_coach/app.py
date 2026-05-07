@@ -10,8 +10,15 @@ from pydantic import BaseModel, Field
 
 from lc_coach import db
 from lc_coach.coach import CoachError, build_hint_prompt, claude_p
-from lc_coach.ingest import aggregate, default_sources
+from lc_coach.ingest import aggregate, default_sources, normalize_company
 from lc_coach.mastery import map_leetcode_tags_to_patterns
+from lc_coach.recommend import (
+    COLD_START_THRESHOLD,
+    expand_pool,
+    needs_cold_start,
+    pick_next,
+    rank_similar,
+)
 
 
 def create_app() -> FastAPI:
@@ -190,6 +197,129 @@ def create_app() -> FastAPI:
             rows = db.get_due_problems(conn, limit=limit)
         return [DueRow(**r) for r in rows]
 
+    @app.get("/similar/{name}", response_model=list[SimilarCompany])
+    def similar(name: str, k: int = 5) -> list[SimilarCompany]:
+        canonical = normalize_company(name)
+        with db.connect() as conn:
+            profiles = db.load_all_company_profiles(conn)
+        target = profiles.get(canonical)
+        if target is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"company '{canonical}' not in DB; ingest it first via POST /ingest",
+            )
+        ranked = rank_similar(target, profiles.values(), k=k)
+        return [
+            SimilarCompany(
+                name=other.name,
+                score=score,
+                n_problems=other.n_problems,
+            )
+            for other, score in ranked
+        ]
+
+    @app.get("/next", response_model=NextOut)
+    def next_problem(
+        target: str,
+        auto_ingest: bool = True,
+        k_similar: int = 5,
+    ) -> NextOut:
+        canonical = normalize_company(target)
+        if not canonical:
+            raise HTTPException(status_code=400, detail="empty target")
+
+        with db.connect() as conn:
+            profiles = db.load_all_company_profiles(conn)
+
+        if canonical not in profiles:
+            if not auto_ingest:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"company '{canonical}' not in DB. Re-call with "
+                        f"auto_ingest=true or POST /ingest first."
+                    ),
+                )
+            try:
+                aggregated = aggregate(
+                    default_sources(), companies_filter=[canonical]
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502, detail=f"ingest failed: {exc}"
+                )
+            with db.connect() as conn:
+                counts = db.store_aggregated_companies(conn, aggregated)
+                profiles = db.load_all_company_profiles(conn)
+            if canonical not in profiles or counts["problems"] == 0:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"company '{canonical}' produced no rows from any source. "
+                        "Try a different target."
+                    ),
+                )
+
+        target_profile = profiles[canonical]
+        ranked_similar = rank_similar(
+            target_profile, profiles.values(), k=k_similar
+        )
+
+        with db.connect() as conn:
+            target_entries = db.get_pool_entries(conn, canonical)
+            similar_entries = {
+                other.name: db.get_pool_entries(conn, other.name)
+                for other, _ in ranked_similar
+            }
+            cold_start = needs_cold_start(target_profile)
+            pool = expand_pool(
+                target_profile,
+                ranked_similar if cold_start else [],
+                target_entries=target_entries,
+                similar_entries_by_company=similar_entries if cold_start else {},
+            )
+            slugs = [e.slug for e in pool]
+            patterns_by_slug = db.get_problem_pattern_map(conn, slugs)
+            due_rows = db.get_due_problems(conn, limit=1000)
+            due_slugs = {r["problem_slug"] for r in due_rows}
+            recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
+            weak_patterns = db.get_weakest_pattern_names(conn, n=3)
+
+        chosen = pick_next(
+            pool,
+            weak_patterns_by_slug=patterns_by_slug,
+            due_slugs=due_slugs,
+            recent_slugs=recent_slugs,
+            user_weak_patterns=weak_patterns,
+            target_name=canonical,
+        )
+        if chosen is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no candidates for '{canonical}'. Both target and similar "
+                    "companies are empty — try a different target."
+                ),
+            )
+
+        return NextOut(
+            slug=chosen.slug,
+            title=chosen.title,
+            difficulty=chosen.difficulty,
+            leetcode_url=f"https://leetcode.com/problems/{chosen.slug}/",
+            score=chosen.score,
+            from_company=chosen.company,
+            rationale=" · ".join(chosen.rationale_parts),
+            cold_start_used=cold_start,
+            target=canonical,
+            target_pool_size=target_profile.n_problems,
+            similar_companies=[
+                SimilarCompany(name=p.name, score=s, n_problems=p.n_problems)
+                for p, s in ranked_similar
+            ],
+            user_weak_patterns=weak_patterns,
+        )
+
     return app
 
 
@@ -317,6 +447,27 @@ class DueRow(BaseModel):
     ease: float
     last_quality: Optional[int] = None
     last_reviewed_at: Optional[str] = None
+
+
+class SimilarCompany(BaseModel):
+    name: str
+    score: float
+    n_problems: int
+
+
+class NextOut(BaseModel):
+    slug: str
+    title: Optional[str] = None
+    difficulty: Optional[str] = None
+    leetcode_url: str
+    score: float
+    from_company: str
+    rationale: str
+    cold_start_used: bool
+    target: str
+    target_pool_size: int
+    similar_companies: list[SimilarCompany] = Field(default_factory=list)
+    user_weak_patterns: list[str] = Field(default_factory=list)
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`

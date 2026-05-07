@@ -12,6 +12,34 @@
       <h1>lc-coach</h1>
     </header>
 
+    <section id="target-card" class="card">
+      <div class="row-between" style="margin-bottom: 6px">
+        <strong class="small">Target company</strong>
+        <span class="muted small" id="target-meta"></span>
+      </div>
+      <div class="target-row">
+        <input
+          type="text"
+          id="target-input"
+          list="target-options"
+          placeholder="e.g. spacex, apple, anduril"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <datalist id="target-options"></datalist>
+        <button id="next-btn" class="primary-btn" disabled>Next problem</button>
+      </div>
+      <div id="target-status" class="muted small" hidden style="margin-top: 6px"></div>
+      <div id="next-result" hidden style="margin-top: 8px">
+        <div class="next-headline">
+          <a id="next-link" href="#" target="_blank" rel="noopener"></a>
+          <span id="next-difficulty" class="pill"></span>
+        </div>
+        <div id="next-rationale" class="muted small" style="margin-top: 4px"></div>
+        <div id="next-similar" class="muted small" style="margin-top: 4px"></div>
+      </div>
+    </section>
+
     <section id="problem-card" class="card">
       <div id="problem-empty" class="muted">
         Open a LeetCode problem page to begin.
