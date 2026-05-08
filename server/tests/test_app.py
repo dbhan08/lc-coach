@@ -346,6 +346,27 @@ def test_company_mode_skips_premium_slugs(tmp_db):
             assert r.json()["slug"] != "valid-anagram"
 
 
+def test_skill_mode_excludes_one_shot_slugs(tmp_db):
+    """`exclude=slug1,slug2` should hide those slugs for this call only —
+    no persistent flag, just a one-shot 'give me something else'."""
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        # Without exclude, hashing has 3 candidates (two-sum, group-anagrams, valid-anagram)
+        first = c.get("/next", params={"mode": "skill", "pattern": "hashing"}).json()
+        first_slug = first["slug"]
+        # Ask again, excluding the one we just got
+        second = c.get(
+            "/next",
+            params={"mode": "skill", "pattern": "hashing", "exclude": first_slug},
+        ).json()
+        assert second["slug"] != first_slug
+        # And the original is NOT permanent — calling without exclude returns it again
+        third = c.get("/next", params={"mode": "skill", "pattern": "hashing"}).json()
+        # third may or may not equal first depending on tiebreaks; the key is
+        # nothing got permanent-flagged
+        assert c.get("/premium").json() == []
+
+
 def test_company_mode_returns_404_when_all_premium(tmp_db):
     with _client(tmp_db) as c:
         _ingest_some_data(c)

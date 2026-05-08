@@ -292,16 +292,24 @@ def create_app() -> FastAPI:
         pattern: Optional[str] = None,
         auto_ingest: bool = True,
         k_similar: int = 5,
+        exclude: Optional[str] = None,
     ) -> NextOut:
         mode = (mode or "company").strip().lower()
+        # Parse comma-separated one-shot exclusion list
+        exclude_slugs: set[str] = set()
+        if exclude:
+            exclude_slugs = {
+                s.strip().lower() for s in exclude.split(",") if s.strip()
+            }
+
         if mode == "skill":
             if not pattern:
                 raise HTTPException(
                     status_code=400, detail="skill mode requires `pattern`"
                 )
-            return _next_skill(pattern.strip().lower())
+            return _next_skill(pattern.strip().lower(), exclude_slugs=exclude_slugs)
         if mode == "improve":
-            return _next_improve()
+            return _next_improve(exclude_slugs=exclude_slugs)
         if mode != "company":
             raise HTTPException(status_code=400, detail=f"unknown mode: {mode!r}")
 
@@ -369,6 +377,11 @@ def create_app() -> FastAPI:
             weak_patterns = db.get_weakest_pattern_names(conn, n=3)
             premium_slugs = db.get_premium_slugs(conn)
 
+        # Treat one-shot exclusions like recent attempts: hard-filtered, but
+        # they don't persist. Don't override due_slugs since the user might
+        # legitimately want a due problem even if it appeared previously.
+        recent_slugs = recent_slugs | exclude_slugs
+
         chosen = pick_next(
             pool,
             weak_patterns_by_slug=patterns_by_slug,
@@ -406,7 +419,9 @@ def create_app() -> FastAPI:
             mode="company",
         )
 
-    def _next_skill(pattern_name: str) -> NextOut:
+    def _next_skill(
+        pattern_name: str, *, exclude_slugs: Optional[set[str]] = None
+    ) -> NextOut:
         from lc_coach.mastery import COARSE_PATTERNS
 
         if pattern_name not in COARSE_PATTERNS:
@@ -424,6 +439,8 @@ def create_app() -> FastAPI:
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
             premium_slugs = db.get_premium_slugs(conn)
+        if exclude_slugs:
+            recent_slugs = recent_slugs | exclude_slugs
 
         if not candidates:
             raise HTTPException(
@@ -469,7 +486,7 @@ def create_app() -> FastAPI:
             pattern_elo=pattern_elo,
         )
 
-    def _next_improve() -> NextOut:
+    def _next_improve(*, exclude_slugs: Optional[set[str]] = None) -> NextOut:
         with db.connect() as conn:
             weakest = db.get_weakest_patterns(conn, n=1, attempted_only=True)
             if not weakest:
@@ -493,6 +510,8 @@ def create_app() -> FastAPI:
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
             premium_slugs = db.get_premium_slugs(conn)
+        if exclude_slugs:
+            recent_slugs = recent_slugs | exclude_slugs
 
         if not candidates:
             raise HTTPException(

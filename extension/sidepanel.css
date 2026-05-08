@@ -373,6 +373,20 @@ footer {
 }
 .next-headline a:hover { text-decoration: underline; }
 
+.next-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.skip-premium {
+  border-color: var(--hard);
+  color: var(--hard);
+}
+.skip-premium:hover:not(:disabled) {
+  background: var(--error-bg);
+  border-color: var(--hard);
+}
+
 .coach-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;

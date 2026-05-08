@@ -101,6 +101,7 @@ const els = {
   nextRationale: document.getElementById("next-rationale"),
   nextSimilar: document.getElementById("next-similar"),
   skipPremiumBtn: document.getElementById("skip-premium-btn"),
+  differentOneBtn: document.getElementById("different-one-btn"),
   modeTabs: document.querySelectorAll(".mode-tab"),
   inputCompany: document.getElementById("target-input-company"),
   inputSkill: document.getElementById("target-input-skill"),
@@ -110,6 +111,9 @@ const els = {
 
 let currentMode = "company"; // "company" | "skill" | "improve"
 let lastRecommendedSlug = null;
+// Session-only one-shot exclusion list used by "Show different one".
+// Resets when the user changes mode, target, pattern, or hits the main Next.
+let excludeSlugs = new Set();
 
 let currentProblem = null;
 let activeAttempt = null; // null | { id, started_at, ... }
@@ -324,6 +328,8 @@ function setMode(mode) {
   els.inputCompany.hidden = mode !== "company";
   els.inputSkill.hidden = mode !== "skill";
   els.inputImprove.hidden = mode !== "improve";
+  // Mode change resets one-shot exclusions
+  excludeSlugs = new Set();
   updateNextEnabled();
   try {
     chrome.storage.local.set({ mode });
@@ -435,12 +441,26 @@ function renderNextResult(body) {
   }
   lastRecommendedSlug = body.slug;
   els.skipPremiumBtn.disabled = false;
-  els.skipPremiumBtn.textContent = "Premium-locked → skip";
+  els.skipPremiumBtn.textContent = "Mark Premium → skip";
+  els.differentOneBtn.disabled = false;
+  els.differentOneBtn.textContent =
+    excludeSlugs.size > 0
+      ? `Show different one (${excludeSlugs.size} skipped)`
+      : "Show different one";
 }
 
 async function skipAsPremium() {
   if (!lastRecommendedSlug) return;
   const slug = lastRecommendedSlug;
+  if (
+    !confirm(
+      `Mark "${slug}" as Premium-locked and never recommend it again?\n\n` +
+        `Use this only if the LeetCode page actually shows a paywall.\n` +
+        `For "just give me a different one", use the other button instead.`,
+    )
+  ) {
+    return;
+  }
   els.skipPremiumBtn.disabled = true;
   els.skipPremiumBtn.textContent = `marking '${slug}' premium…`;
   try {
@@ -452,14 +472,28 @@ async function skipAsPremium() {
   } catch (err) {
     setTargetStatus(`couldn't mark premium: ${err.message}`, { isError: true });
     els.skipPremiumBtn.disabled = false;
-    els.skipPremiumBtn.textContent = "Premium-locked → skip";
+    els.skipPremiumBtn.textContent = "Mark Premium → skip";
     return;
   }
-  // Re-fetch a recommendation with the same mode/inputs.
+  // Marking a problem premium is itself a kind of one-shot exclusion for
+  // this call; the persistent premium filter handles future ones.
+  excludeSlugs = new Set();
   await requestNext();
 }
 
-async function requestNext() {
+async function requestDifferent() {
+  if (!lastRecommendedSlug) return;
+  excludeSlugs.add(lastRecommendedSlug);
+  els.differentOneBtn.disabled = true;
+  els.differentOneBtn.textContent = "looking…";
+  await requestNext({ keepExclude: true });
+}
+
+async function requestNext({ keepExclude = false } = {}) {
+  // The main "Next" button resets one-shot exclusions; "Show different one"
+  // calls requestNext({keepExclude:true}) to preserve them across the call.
+  if (!keepExclude) excludeSlugs = new Set();
+
   let url;
   let lookupMsg;
 
@@ -485,6 +519,10 @@ async function requestNext() {
     lookupMsg = "Auto-targeting your weakest pattern…";
   } else {
     return;
+  }
+  if (excludeSlugs.size > 0) {
+    const enc = encodeURIComponent(Array.from(excludeSlugs).join(","));
+    url += (url.includes("?") ? "&" : "?") + `exclude=${enc}`;
   }
 
   els.nextBtn.disabled = true;
@@ -845,14 +883,21 @@ els.mockBtn.addEventListener("click", requestMock);
 
 els.nextBtn.addEventListener("click", requestNext);
 els.skipPremiumBtn.addEventListener("click", skipAsPremium);
-els.targetInput.addEventListener("input", updateNextEnabled);
+els.differentOneBtn.addEventListener("click", requestDifferent);
+els.targetInput.addEventListener("input", () => {
+  excludeSlugs = new Set(); // changing input invalidates accumulated skips
+  updateNextEnabled();
+});
 els.targetInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && els.targetInput.value.trim()) {
     e.preventDefault();
     requestNext();
   }
 });
-els.skillSelect.addEventListener("change", updateNextEnabled);
+els.skillSelect.addEventListener("change", () => {
+  excludeSlugs = new Set();
+  updateNextEnabled();
+});
 els.modeTabs.forEach((tab) => {
   tab.addEventListener("click", () => setMode(tab.dataset.mode));
 });
