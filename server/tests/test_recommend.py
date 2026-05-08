@@ -159,20 +159,69 @@ def test_pick_next_due_for_review_lifts_score():
     assert "due for review" in " ".join(chosen.rationale_parts)
 
 
-def test_pick_next_recent_attempt_penalty():
+def test_pick_next_recent_attempt_hard_filtered_even_at_high_confidence():
+    """Reproduce the v1.1.0 bug: a hot recent slug at 10× confidence should
+    NOT win over a never-attempted candidate. We hard-filter, not just
+    penalize."""
     pool = [
-        PoolEntry(slug="recent", company="apple", confidence=1.0, title="A"),
-        PoolEntry(slug="not-recent", company="apple", confidence=1.0, title="B"),
+        PoolEntry(slug="recent-but-loved", company="spacex", confidence=10.0,
+                  title="Way Higher Confidence", difficulty="Medium"),
+        PoolEntry(slug="not-recent-low-conf", company="spacex", confidence=0.2,
+                  title="Lower Confidence", difficulty="Medium"),
     ]
     chosen = pick_next(
         pool,
         weak_patterns_by_slug={},
         due_slugs=set(),
-        recent_slugs={"recent"},
+        recent_slugs={"recent-but-loved"},
+        user_weak_patterns=[],
+        target_name="spacex",
+    )
+    assert chosen is not None
+    assert chosen.slug == "not-recent-low-conf"
+
+
+def test_pick_next_recent_but_due_still_eligible():
+    """A recently-attempted problem that's also SM-2 due today should still
+    surface — that's the spaced-rep loop, not a duplicate suggestion."""
+    pool = [
+        PoolEntry(slug="recent-and-due", company="apple", confidence=1.0,
+                  title="Due", difficulty="Medium"),
+        PoolEntry(slug="not-recent", company="apple", confidence=0.5,
+                  title="Other", difficulty="Medium"),
+    ]
+    chosen = pick_next(
+        pool,
+        weak_patterns_by_slug={},
+        due_slugs={"recent-and-due"},
+        recent_slugs={"recent-and-due"},
         user_weak_patterns=[],
         target_name="apple",
     )
-    assert chosen is not None and chosen.slug == "not-recent"
+    assert chosen is not None
+    # Higher confidence + due bonus + not filtered out → wins
+    assert chosen.slug == "recent-and-due"
+
+
+def test_pick_next_falls_back_when_all_recent():
+    """If every candidate has been attempted recently and none are due, the
+    recommender falls back to ranking the full pool and flags the repeat in
+    the rationale."""
+    pool = [
+        PoolEntry(slug="a", company="apple", confidence=2.0, title="A"),
+        PoolEntry(slug="b", company="apple", confidence=1.0, title="B"),
+    ]
+    chosen = pick_next(
+        pool,
+        weak_patterns_by_slug={},
+        due_slugs=set(),
+        recent_slugs={"a", "b"},
+        user_weak_patterns=[],
+        target_name="apple",
+    )
+    assert chosen is not None
+    assert chosen.slug == "a"
+    assert any("repeat" in p for p in chosen.rationale_parts)
 
 
 def test_pick_next_returns_none_on_empty():

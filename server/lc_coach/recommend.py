@@ -237,6 +237,22 @@ def score_candidate(
     )
 
 
+def _hard_filter_recent(
+    pool: list, *, recent_slugs: set[str], due_slugs: set[str]
+) -> tuple[list, bool]:
+    """Filter pool to (not recently attempted) ∪ (due for review).
+
+    Returns (filtered_pool, fallback_used). If filtering empties the pool,
+    falls back to the original pool — better to repeat than to fail.
+    """
+    eligible = [
+        e for e in pool if e.slug not in recent_slugs or e.slug in due_slugs
+    ]
+    if eligible:
+        return eligible, False
+    return pool, True
+
+
 def pick_next(
     pool: list[PoolEntry],
     *,
@@ -248,6 +264,11 @@ def pick_next(
 ) -> Optional[CandidateScore]:
     if not pool:
         return None
+
+    filtered, fallback = _hard_filter_recent(
+        pool, recent_slugs=recent_slugs, due_slugs=due_slugs
+    )
+
     scored = [
         score_candidate(
             e,
@@ -257,10 +278,15 @@ def pick_next(
             user_weak_patterns=user_weak_patterns,
             target_name=target_name,
         )
-        for e in pool
+        for e in filtered
     ]
     scored.sort(key=lambda c: c.score, reverse=True)
-    return scored[0]
+    chosen = scored[0]
+    if fallback:
+        chosen.rationale_parts.append(
+            "(repeat — every candidate has been attempted recently)"
+        )
+    return chosen
 
 
 # --- Skill / Improve mode -------------------------------------------------
@@ -353,6 +379,11 @@ def pick_skill_next(
 ) -> Optional[SkillCandidate]:
     if not candidates:
         return None
+
+    filtered, fallback = _hard_filter_recent(
+        candidates, recent_slugs=recent_slugs, due_slugs=due_slugs
+    )
+
     scored = [
         score_skill_candidate(
             c,
@@ -361,7 +392,12 @@ def pick_skill_next(
             recent_slugs=recent_slugs,
             pattern_name=pattern_name,
         )
-        for c in candidates
+        for c in filtered
     ]
     scored.sort(key=lambda c: c.score, reverse=True)
-    return scored[0]
+    chosen = scored[0]
+    if fallback:
+        chosen.rationale_parts.append(
+            "(repeat — every candidate has been attempted recently)"
+        )
+    return chosen
