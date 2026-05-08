@@ -14,20 +14,37 @@
 
     <section id="target-card" class="card">
       <div class="row-between" style="margin-bottom: 6px">
-        <strong class="small">Target company</strong>
+        <strong class="small">Find a problem</strong>
         <span class="muted small" id="target-meta"></span>
       </div>
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="company">Company</button>
+        <button class="mode-tab" data-mode="skill">Skill</button>
+        <button class="mode-tab" data-mode="improve">Improve</button>
+      </div>
       <div class="target-row">
-        <input
-          type="text"
-          id="target-input"
-          list="target-options"
-          placeholder="e.g. spacex, apple, anduril"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <datalist id="target-options"></datalist>
-        <button id="next-btn" class="primary-btn" disabled>Next problem</button>
+        <div class="target-input-area">
+          <div id="target-input-company">
+            <input
+              type="text"
+              id="target-input"
+              list="target-options"
+              placeholder="company (e.g. spacex, apple)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <datalist id="target-options"></datalist>
+          </div>
+          <div id="target-input-skill" hidden>
+            <select id="skill-select">
+              <option value="">— pick a pattern —</option>
+            </select>
+          </div>
+          <div id="target-input-improve" hidden class="muted small improve-hint">
+            auto-targets your weakest pattern at appropriate difficulty
+          </div>
+        </div>
+        <button id="next-btn" class="primary-btn" disabled>Next</button>
       </div>
       <div id="target-status" class="muted small" hidden style="margin-top: 6px"></div>
       <div id="next-result" hidden style="margin-top: 8px">
@@ -110,10 +127,14 @@
         </button>
         <button data-level="2" class="hint-btn">
           <span class="hint-level">L2</span>
-          <span class="hint-label">Data structure</span>
+          <span class="hint-label">Data&nbsp;structure</span>
         </button>
         <button data-level="3" class="hint-btn">
           <span class="hint-level">L3</span>
+          <span class="hint-label">Strategy</span>
+        </button>
+        <button data-level="4" class="hint-btn">
+          <span class="hint-level">L4</span>
           <span class="hint-label">Decompose</span>
         </button>
       </div>
@@ -122,8 +143,7 @@
         <button id="mock-btn" class="coach-btn">Mock interview</button>
       </div>
       <div id="hint-output" class="hint-output muted">
-        Click a hint level when you're stuck. L1 → category only.
-        L2 → data structure. L3 → step-by-step decomposition (no code).
+        Click a hint level when you're stuck. L1 → pattern category. L2 → data structure. L3 → strategy in prose. L4 → step-by-step decomposition (still no code).
       </div>
     </section>
 

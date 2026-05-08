@@ -494,13 +494,19 @@ def store_aggregated_companies(
 ) -> dict:
     """Persist the output of `ingest.aggregate()`. Returns counts.
 
-    The aggregated input shape is {company: {slug: CompanyProblemRow}} where
-    each row has `appearances` as a set of (source_id, window) tuples. We
-    serialize appearances as a JSON list-of-lists.
+    For each ingested (company, slug) row, we ALSO upsert a stub into the
+    `problems` table (so problem_patterns FK works) and assign heuristically-
+    inferred coarse patterns. This means skill/improve mode can find problems
+    even before the user has opened them — the user's lazy pattern tagging on
+    `/problems` later will overwrite/augment these heuristic tags.
     """
+    from lc_coach.mastery import infer_patterns_from_slug
+
     now = _now_iso()
     n_companies = 0
     n_problems = 0
+    n_problem_stubs = 0
+    n_pattern_assignments = 0
     for company, rows in aggregated.items():
         if not rows:
             continue
@@ -538,7 +544,46 @@ def store_aggregated_companies(
                 ),
             )
             n_problems += 1
-    return {"companies": n_companies, "problems": n_problems}
+
+            # Upsert stub problems row so problem_patterns FK is satisfied.
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO problems
+                    (slug, title, statement, difficulty, tags_json, first_seen)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row.slug,
+                    row.title or row.slug,
+                    "(ingested stub — full statement loads when you open the problem)",
+                    row.difficulty,
+                    None,
+                    now,
+                ),
+            )
+            if cur.rowcount > 0:
+                n_problem_stubs += 1
+
+            # Heuristic pattern tags. Use INSERT OR IGNORE so we don't clobber
+            # any patterns the user has already attached via /problems.
+            for pattern_name in infer_patterns_from_slug(row.slug):
+                pid = _pattern_id(conn, pattern_name)
+                if pid is None:
+                    continue
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO problem_patterns (problem_slug, pattern_id) "
+                    "VALUES (?, ?)",
+                    (row.slug, pid),
+                )
+                if cur.rowcount > 0:
+                    n_pattern_assignments += 1
+
+    return {
+        "companies": n_companies,
+        "problems": n_problems,
+        "problem_stubs": n_problem_stubs,
+        "pattern_assignments": n_pattern_assignments,
+    }
 
 
 def get_companies_with_counts(conn: sqlite3.Connection) -> list[dict]:
@@ -783,3 +828,57 @@ def get_weakest_pattern_names(
     """Names only — for the recommender's weak-pattern bonus."""
     rows = get_weakest_patterns(conn, n=n)
     return [r["name"] for r in rows]
+
+
+def get_pattern_elo(conn: sqlite3.Connection, pattern_name: str) -> float:
+    from lc_coach.mastery import INITIAL_PATTERN_ELO
+
+    row = conn.execute(
+        """
+        SELECT m.elo FROM mastery m
+        JOIN patterns p ON p.id = m.pattern_id
+        WHERE p.name = ?
+        """,
+        (pattern_name,),
+    ).fetchone()
+    return float(row["elo"]) if row else INITIAL_PATTERN_ELO
+
+
+def get_problems_by_pattern(
+    conn: sqlite3.Connection, pattern_name: str, *, limit: int = 200
+) -> list:
+    """Return SkillCandidates: one per problem tagged with this pattern.
+    Confidence is the max across all companies that ingested the problem
+    (0 if untagged by any company)."""
+    from lc_coach.recommend import SkillCandidate
+
+    rows = conn.execute(
+        """
+        SELECT p.slug, p.title, p.difficulty,
+               COALESCE(MAX(cp.confidence), 0.0) AS confidence
+        FROM patterns pat
+        JOIN problem_patterns pp ON pp.pattern_id = pat.id
+        JOIN problems p ON p.slug = pp.problem_slug
+        LEFT JOIN company_problems cp ON cp.problem_slug = p.slug
+        WHERE pat.name = ?
+        GROUP BY p.slug, p.title, p.difficulty
+        ORDER BY confidence DESC
+        LIMIT ?
+        """,
+        (pattern_name, limit),
+    ).fetchall()
+    return [
+        SkillCandidate(
+            slug=r["slug"],
+            title=r["title"],
+            difficulty=r["difficulty"],
+            confidence=float(r["confidence"]),
+        )
+        for r in rows
+    ]
+
+
+def get_pattern_id_by_name(
+    conn: sqlite3.Connection, name: str
+) -> Optional[int]:
+    return _pattern_id(conn, name)

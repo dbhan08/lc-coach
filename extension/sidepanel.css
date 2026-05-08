@@ -109,8 +109,8 @@ header h1 {
 
 .hint-buttons {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
   margin-bottom: 10px;
 }
 .hint-btn {
@@ -140,7 +140,6 @@ header h1 {
 .hint-label { color: var(--muted); }
 
 .hint-output {
-  white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.5;
   min-height: 80px;
@@ -148,6 +147,35 @@ header h1 {
   overflow-y: auto;
 }
 .hint-output.has-content { color: var(--fg); }
+.hint-output p { margin: 0 0 8px; }
+.hint-output p:last-child { margin-bottom: 0; }
+.hint-output strong { color: var(--fg); font-weight: 600; }
+.hint-output em { font-style: italic; }
+.hint-output h2, .hint-output h3 {
+  font-size: 13px;
+  margin: 10px 0 4px;
+  font-weight: 600;
+}
+.hint-output code {
+  background: rgba(127,127,127,0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+}
+.hint-output pre {
+  background: rgba(127,127,127,0.10);
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 6px 0;
+  white-space: pre;
+}
+.hint-output pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.88em;
+}
 
 .error-card {
   border-color: var(--error);
@@ -277,13 +305,40 @@ footer {
 }
 .due-row .due-overdue { color: var(--hard); font-weight: 600; }
 
+.mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.mode-tab {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  transition: all 0.1s;
+}
+.mode-tab:hover { color: var(--fg); border-color: var(--accent); }
+.mode-tab.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  font-weight: 500;
+}
+
 .target-row {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 6px;
   align-items: center;
 }
-.target-row input {
+.target-input-area input,
+.target-input-area select {
+  width: 100%;
   font-family: inherit;
   font-size: 12px;
   padding: 6px 8px;
@@ -292,9 +347,14 @@ footer {
   background: var(--bg);
   color: var(--fg);
 }
-.target-row input:focus {
+.target-input-area input:focus,
+.target-input-area select:focus {
   outline: none;
   border-color: var(--accent);
+}
+.improve-hint {
+  padding: 6px 0;
+  line-height: 1.4;
 }
 
 .next-headline {

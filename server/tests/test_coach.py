@@ -7,7 +7,7 @@ from lc_coach import coach
 
 
 def test_build_hint_prompt_levels():
-    for level in (1, 2, 3):
+    for level in (1, 2, 3, 4):
         prompt = coach.build_hint_prompt(
             title="Two Sum",
             statement="Given an array...",
@@ -34,7 +34,11 @@ def test_build_hint_prompt_includes_prior():
 def test_build_hint_prompt_invalid_level():
     with pytest.raises(ValueError):
         coach.build_hint_prompt(
-            title="x", statement="y", difficulty=None, level=4, prior_hints=[]
+            title="x", statement="y", difficulty=None, level=5, prior_hints=[]
+        )
+    with pytest.raises(ValueError):
+        coach.build_hint_prompt(
+            title="x", statement="y", difficulty=None, level=0, prior_hints=[]
         )
 
 
@@ -88,9 +92,20 @@ def test_l2_template_names_data_structure_but_forbids_algorithm():
     assert "DO NOT write code" in prompt
 
 
-def test_l3_template_decomposes_but_forbids_code():
+def test_l3_template_strategy_contract():
     prompt = coach.build_hint_prompt(
         title="X", statement="...", difficulty="Easy", level=3, prior_hints=[]
+    )
+    # L3 is now "Strategy" — prose, not numbered steps, no formal algorithm names
+    assert "STRATEGY" in prompt
+    assert "DO NOT name the algorithm by formal name" in prompt
+    assert "DO NOT decompose into numbered steps" in prompt
+    assert "DO NOT write code" in prompt
+
+
+def test_l4_template_decomposes_but_forbids_code():
+    prompt = coach.build_hint_prompt(
+        title="X", statement="...", difficulty="Easy", level=4, prior_hints=[]
     )
     assert "Decompose the problem" in prompt
     assert "DO NOT write code" in prompt

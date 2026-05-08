@@ -81,6 +81,9 @@ def _format_prior_hints(prior_hints: list[dict]) -> str:
     return "\n".join(lines)
 
 
+VALID_HINT_LEVELS = (1, 2, 3, 4)
+
+
 def build_hint_prompt(
     *,
     title: str,
@@ -89,8 +92,10 @@ def build_hint_prompt(
     level: int,
     prior_hints: Optional[list[dict]] = None,
 ) -> str:
-    if level not in (1, 2, 3):
-        raise ValueError(f"hint level must be 1, 2, or 3 (got {level})")
+    if level not in VALID_HINT_LEVELS:
+        raise ValueError(
+            f"hint level must be one of {VALID_HINT_LEVELS} (got {level})"
+        )
     template = _load_template(f"hint_level_{level}.txt")
     return template.format(
         title=title,

@@ -166,3 +166,23 @@ Completed: 2026-05-07.
 - After each session, append `Completed: YYYY-MM-DD` under that session's heading.
 - Don't barrel ahead — stop after each session, summarize, commit + push, offer the next.
 - The user runs subprocess-y or browser-loading steps manually (loading the extension, granting permissions, launching the service) — provide text instructions, don't try to automate.
+
+---
+
+## Session 8 / v1.1.0 — usability follow-ups
+
+Post-v1 polish round triggered by real usage feedback (slow responses, raw-markdown rendering, asks for skill/improve modes and a 4th hint level).
+
+- [x] **Markdown rendering** in the side panel hint output. Tiny inline parser handling `**bold**`, `*italic*`, `` `inline code` ``, ```` ```fenced code blocks``` ````, `## h2` / `### h3`, paragraph breaks. HTML-escape first, mutate after. CSS for code/pre/strong/p inside .hint-output. Replaces the previous textContent + pre-wrap rendering that leaked raw `**` / backticks (per user screenshot).
+- [x] **Faster hints by default**: side panel passes `model: "claude-haiku-4-5-20251001"` for hint requests (~3–5× faster than Sonnet). Review and mock keep the default model where depth matters.
+- [x] **Four hint levels**: inserted L3 **Strategy** between L2 (data structure) and the existing decompose level (now L4). L3 contract: high-level approach in prose, may describe technique by behavior, no formal algorithm name, no numbered steps, no code, ends with a complexity-commitment question. Renamed old L3 → L4. Updated build_hint_prompt validation, Pydantic Field constraint (ge=1, le=4), HTML grid (4 columns), all tests.
+- [x] **Heuristic problem-pattern tagger** (`mastery.infer_patterns_from_slug`) with ~120 substring→pattern mappings. Runs at ingest time so problem_patterns has wide coverage *before* the user opens problems.
+- [x] **Stub-problem upsert at ingest** — `INSERT OR IGNORE INTO problems` with a placeholder statement so problem_patterns FK works for ingested-but-not-opened problems. Real statement loads when the user opens it via `/problems`.
+- [x] **Skill mode**: `GET /next?mode=skill&pattern=X` — pulls from problems tagged with that pattern across all companies, scored by appropriate-difficulty-for-Elo + due bonus + recent-attempt penalty.
+- [x] **Improve mode**: `GET /next?mode=improve` — auto-picks user's weakest pattern (with attempts > 0); falls back to "hashing" warmup if there's no attempt history yet. Same scoring as skill mode after pattern resolution.
+- [x] **Difficulty bucket logic**: pattern Elo <1100 → Easy preferred (Medium acceptable); 1100–1399 → Medium preferred (Easy/Hard acceptable); ≥1400 → Hard preferred (Medium acceptable).
+- [x] **Side panel mode tabs** (Company / Skill / Improve) with adaptive input — text-with-autocomplete for company, pattern dropdown sorted by your Elo (lowest first) for skill, no input needed for improve. Persists last mode + last input via chrome.storage.local.
+- [x] 19 new pytest tests (95 total): heuristic tagger fixtures, skill mode happy path, skill-mode validation (missing pattern → 400, unknown pattern → 404), improve mode fallback + attempts-driven targeting, unknown mode → 400, L4 hint accepted, L3 strategy contract regressions.
+- [x] Live verified: 11-company ingest seeded 192 graph / 83 design / 58 bit-manip / 57 dp / 56 arrays / 32 binary-search / 29 hashing / 29 backtracking / 27 greedy / 20 string pattern tags. `/next?mode=skill&pattern=union-find` → number-of-provinces. `/next?mode=skill&pattern=monotonic-stack` → decode-string. `/next?mode=improve` (no attempts) → group-anagrams (hashing warmup).
+
+Completed: 2026-05-07. Tagged v1.1.0.

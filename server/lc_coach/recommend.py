@@ -38,11 +38,17 @@ COLD_START_THRESHOLD = 30
 # cold-start gate.
 HIGH_CONFIDENCE_FLOOR = 0.4
 
-# Scoring weights for next-problem selection
+# Scoring weights for next-problem selection (company mode)
 W_POOL = 1.0
 W_WEAK = 1.5
 W_DUE = 1.2
 W_RECENT_PENALTY = 0.8
+
+# Scoring weights for skill / improve mode
+W_SKILL_POOL = 0.8
+W_SKILL_DIFFICULTY = 1.5
+W_SKILL_DUE = 1.0
+W_SKILL_RECENT_PENALTY = 1.2
 
 
 # --- shapes -------------------------------------------------------------
@@ -252,6 +258,110 @@ def pick_next(
             target_name=target_name,
         )
         for e in pool
+    ]
+    scored.sort(key=lambda c: c.score, reverse=True)
+    return scored[0]
+
+
+# --- Skill / Improve mode -------------------------------------------------
+
+
+def difficulty_target_for_elo(pattern_elo: float) -> tuple[str, set[str]]:
+    """Pick the appropriate-difficulty bucket for a user's pattern Elo.
+
+    Returns (preferred_difficulty, also_acceptable_set). Preferred earns the
+    full difficulty bonus; "also acceptable" earns half. Anything else gets 0.
+    """
+    if pattern_elo < 1100:
+        return ("Easy", {"Medium"})
+    if pattern_elo < 1400:
+        return ("Medium", {"Easy", "Hard"})
+    return ("Hard", {"Medium"})
+
+
+def difficulty_match_score(
+    candidate_difficulty: Optional[str], pattern_elo: float
+) -> float:
+    if not candidate_difficulty:
+        return 0.0
+    diff = candidate_difficulty.strip()
+    preferred, acceptable = difficulty_target_for_elo(pattern_elo)
+    if diff == preferred:
+        return 1.0
+    if diff in acceptable:
+        return 0.5
+    return 0.0
+
+
+@dataclass
+class SkillCandidate:
+    slug: str
+    title: Optional[str]
+    difficulty: Optional[str]
+    confidence: float  # max company-confidence for this slug
+    rationale_parts: list[str] = field(default_factory=list)
+    score: float = 0.0
+    diff_match: float = 0.0
+
+
+def score_skill_candidate(
+    entry: SkillCandidate,
+    *,
+    pattern_elo: float,
+    due_slugs: set[str],
+    recent_slugs: set[str],
+    pattern_name: str,
+) -> SkillCandidate:
+    diff_match = difficulty_match_score(entry.difficulty, pattern_elo)
+    due_score = 1.0 if entry.slug in due_slugs else 0.0
+    recent_penalty = 1.0 if entry.slug in recent_slugs else 0.0
+
+    total = (
+        W_SKILL_POOL * entry.confidence
+        + W_SKILL_DIFFICULTY * diff_match
+        + W_SKILL_DUE * due_score
+        - W_SKILL_RECENT_PENALTY * recent_penalty
+    )
+
+    parts = [f"hits {pattern_name}"]
+    preferred, _ = difficulty_target_for_elo(pattern_elo)
+    if entry.difficulty:
+        if entry.difficulty == preferred:
+            parts.append(
+                f"{entry.difficulty} matches your Elo on this pattern"
+            )
+        else:
+            parts.append(f"{entry.difficulty} (off the ideal {preferred})")
+    if entry.slug in due_slugs:
+        parts.append("due for review")
+    if entry.slug in recent_slugs:
+        parts.append("(de-emphasized: recently attempted)")
+
+    entry.score = total
+    entry.diff_match = diff_match
+    entry.rationale_parts = parts
+    return entry
+
+
+def pick_skill_next(
+    candidates: list[SkillCandidate],
+    *,
+    pattern_elo: float,
+    due_slugs: set[str],
+    recent_slugs: set[str],
+    pattern_name: str,
+) -> Optional[SkillCandidate]:
+    if not candidates:
+        return None
+    scored = [
+        score_skill_candidate(
+            c,
+            pattern_elo=pattern_elo,
+            due_slugs=due_slugs,
+            recent_slugs=recent_slugs,
+            pattern_name=pattern_name,
+        )
+        for c in candidates
     ]
     scored.sort(key=lambda c: c.score, reverse=True)
     return scored[0]

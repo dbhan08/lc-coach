@@ -180,7 +180,12 @@ def test_store_aggregated_companies_round_trip(tmp_db):
     aggregated = aggregate([src])
     with db.connect() as conn:
         counts = db.store_aggregated_companies(conn, aggregated)
-    assert counts == {"companies": 1, "problems": 2}
+    assert counts["companies"] == 1
+    assert counts["problems"] == 2
+    # ingest now also stubs into the `problems` table so problem_patterns FK works
+    assert counts["problem_stubs"] == 2
+    # heuristic tagger should attach at least one pattern per problem
+    assert counts["pattern_assignments"] >= 1
 
     with db.connect() as conn:
         companies = db.get_companies_with_counts(conn)

@@ -4,7 +4,7 @@ A personal LeetCode coach that lives inside your browser. Click a hint button on
 
 No API key required — calls go through your existing `claude` CLI subscription via a local Python service.
 
-Status: **v1.0.0** (sessions 1–7).
+Status: **v1.1.0** (sessions 1–7 + a usability follow-up round adding markdown rendering, a 4th hint level, and skill/improve modes).
 
 ## Run it
 
@@ -26,13 +26,22 @@ If you'd rather use your main Chrome profile: skip the launcher, run `python -m 
 
 ## What's in the side panel
 
-- **Target company** — type any company (autocomplete from your ingested set). Click **Next problem** and the recommender returns a problem with rationale. If the company isn't in the DB yet, the service auto-ingests just that company from public sources (~5–30 s on first hit). For thin targets like SpaceX (15 problems), cold-start expansion automatically draws from similar companies.
+- **Find a problem (3 modes)**:
+  - **Company** — type any company (autocomplete from your ingested set). Auto-ingests on demand for unknown targets (~5–30 s on first hit). Cold-start expansion engages for thin targets like SpaceX so the pool draws from similar companies (Tesla, NVIDIA, Apple, Anduril, Palantir).
+  - **Skill** — pick a pattern from the dropdown (sorted by your Elo, weakest first). Recommender returns a problem of difficulty appropriate to your Elo on that pattern.
+  - **Improve** — no input. Auto-targets your weakest attempted pattern at the right difficulty. With no attempts logged yet, falls back to a sensible warmup pattern.
 - **Weakest patterns** — your bottom-N pattern Elos. Updates after every finished attempt.
 - **Due for review** — SM-2 spaced repetition. Click-through opens leetcode.com.
-- **Hint buttons** — L1 (pattern category only) → L2 (data structure, no algorithm) → L3 (algorithmic decomposition, no code). Each level has an explicit prompt contract.
+- **Hint buttons** — 4 levels with explicit prompt contracts:
+  - **L1 Pattern** — broad category only (e.g. "this is hashing"). No data structure, no algorithm.
+  - **L2 Data structure** — names the structure (e.g. "use a hash map"). No algorithm name.
+  - **L3 Strategy** — algorithmic approach in prose. Describes technique by behavior, no formal name, no numbered steps, no code.
+  - **L4 Decompose** — numbered subproblems. Algorithm names allowed; still no code.
 - **Review my code** — auto-fetches your Monaco-editor code, returns a staff-engineer-style review (bugs first, then complexity in big-O, then style; never writes the better solution for you).
 - **Mock interview** — single-response interview round on the current problem: poses it, lists the clarifying questions you should ask with answers, asks for approach before code, pre-empts the wrong direction, demands complexity commitment, throws a follow-up.
 - **Attempt logging** — Start → live timer → I'm done → outcome picker (solved / partial / stuck). Code is auto-captured from Monaco. Every hint you take attaches to the active attempt.
+
+Hints render with markdown (bold, inline code, code blocks). Hints use Haiku for ~3–5× faster responses than Sonnet; review and mock keep the default model.
 
 ## How it works
 
@@ -70,7 +79,7 @@ Python 3.9, FastAPI, uvicorn, SQLite (stdlib), `claude` CLI subprocess, Chrome M
 
 ```bash
 cd server && .venv/bin/pytest
-# 74 passed
+# 95 passed
 ```
 
 Coverage: prompt contract regressions, Elo math, SM-2 quality mapping + interval progression, ingest parsing for both source formats, similarity + cold-start expansion + recommender ranking, full attempt lifecycle integration tests with monkeypatched `claude -p`.

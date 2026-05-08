@@ -6,6 +6,60 @@
 
 const SERVICE_BASE = "http://127.0.0.1:8765";
 
+// Hints are short, contract-driven, and time-sensitive — use Haiku for ~3–5×
+// faster responses. Review and mock keep the default model (Sonnet) where
+// depth matters more than latency.
+const HINT_MODEL = "claude-haiku-4-5-20251001";
+
+// --- Tiny markdown renderer ----------------------------------------------
+// Handles the subset Claude actually emits in our prompts: **bold**,
+// *italic*, `inline code`, ```fenced code blocks```, ## headings,
+// paragraph breaks. HTML-escape first; mutate after.
+function renderMarkdown(text) {
+  if (!text) return "";
+  const esc = (s) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  let html = esc(text);
+
+  // Fenced code blocks first so their inner ` and * don't get mangled
+  html = html.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const safe = code.replace(/\n+$/, "");
+    return `<pre><code>${safe}</code></pre>`;
+  });
+
+  // Inline code (single backticks, no newlines inside)
+  html = html.replace(/`([^`\n]+?)`/g, "<code>$1</code>");
+
+  // Bold (**text**) and italic (*text*); bold first so * inside ** doesn't fire
+  html = html.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(^|[^*])\*([^*\n][^*\n]*?)\*(?!\*)/g, "$1<em>$2</em>");
+
+  // Headings
+  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+
+  // Paragraphs from blank lines; single newlines inside become <br>.
+  return html
+    .split(/\n{2,}/)
+    .map((chunk) => {
+      const trimmed = chunk.trim();
+      if (!trimmed) return "";
+      if (
+        trimmed.startsWith("<pre>") ||
+        trimmed.startsWith("<h2") ||
+        trimmed.startsWith("<h3")
+      ) {
+        return trimmed;
+      }
+      return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 const els = {
   statusDot: document.getElementById("status-dot"),
   problemEmpty: document.getElementById("problem-empty"),
@@ -46,7 +100,14 @@ const els = {
   nextDifficulty: document.getElementById("next-difficulty"),
   nextRationale: document.getElementById("next-rationale"),
   nextSimilar: document.getElementById("next-similar"),
+  modeTabs: document.querySelectorAll(".mode-tab"),
+  inputCompany: document.getElementById("target-input-company"),
+  inputSkill: document.getElementById("target-input-skill"),
+  inputImprove: document.getElementById("target-input-improve"),
+  skillSelect: document.getElementById("skill-select"),
 };
+
+let currentMode = "company"; // "company" | "skill" | "improve"
 
 let currentProblem = null;
 let activeAttempt = null; // null | { id, started_at, ... }
@@ -69,7 +130,7 @@ function clearError() {
   els.errorMessage.textContent = "";
 }
 
-function setHintOutput(text, { withSpinner = false } = {}) {
+function setHintOutput(text, { withSpinner = false, raw = false } = {}) {
   if (withSpinner) {
     els.hintOutput.classList.remove("has-content");
     els.hintOutput.classList.add("muted");
@@ -77,7 +138,7 @@ function setHintOutput(text, { withSpinner = false } = {}) {
   } else if (text) {
     els.hintOutput.classList.remove("muted");
     els.hintOutput.classList.add("has-content");
-    els.hintOutput.textContent = text;
+    els.hintOutput.innerHTML = raw ? text : renderMarkdown(text);
   } else {
     els.hintOutput.classList.add("muted");
     els.hintOutput.classList.remove("has-content");
@@ -253,6 +314,30 @@ function normalizeCompanyClient(raw) {
     .replace(/^-|-$/g, "");
 }
 
+function setMode(mode) {
+  currentMode = mode;
+  els.modeTabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.mode === mode);
+  });
+  els.inputCompany.hidden = mode !== "company";
+  els.inputSkill.hidden = mode !== "skill";
+  els.inputImprove.hidden = mode !== "improve";
+  updateNextEnabled();
+  try {
+    chrome.storage.local.set({ mode });
+  } catch {}
+}
+
+function updateNextEnabled() {
+  if (currentMode === "company") {
+    els.nextBtn.disabled = !els.targetInput.value.trim();
+  } else if (currentMode === "skill") {
+    els.nextBtn.disabled = !els.skillSelect.value;
+  } else {
+    els.nextBtn.disabled = false; // improve always enabled
+  }
+}
+
 async function refreshTargets() {
   try {
     const r = await fetch(`${SERVICE_BASE}/companies`);
@@ -265,18 +350,52 @@ async function refreshTargets() {
       opt.label = `${row.name} (${row.n_problems})`;
       els.targetOptions.appendChild(opt);
     });
-    els.targetMeta.textContent = `${rows.length} ingested`;
+    els.targetMeta.textContent = `${rows.length} companies ingested`;
   } catch {
     els.targetMeta.textContent = "(companies unavailable)";
   }
-  // Restore last-used target
+  // Populate skill-mode pattern dropdown from /mastery (full coarse-pattern set)
   try {
-    const stored = await chrome.storage.local.get("target");
+    const r = await fetch(`${SERVICE_BASE}/mastery`);
+    if (r.ok) {
+      const rows = await r.json();
+      // Sort: lowest Elo first (your weak ones surface up top)
+      rows.sort((a, b) => (a.elo ?? 1200) - (b.elo ?? 1200));
+      while (els.skillSelect.options.length > 1) els.skillSelect.remove(1);
+      rows.forEach((row) => {
+        const opt = document.createElement("option");
+        opt.value = row.name;
+        const elo = Math.round(row.elo ?? 1200);
+        opt.textContent =
+          row.n_attempts > 0
+            ? `${row.name}  (Elo ${elo}, ${row.n_attempts}×)`
+            : `${row.name}  (untouched)`;
+        els.skillSelect.appendChild(opt);
+      });
+    }
+  } catch {}
+  // Restore last-used mode + inputs
+  try {
+    const stored = await chrome.storage.local.get([
+      "mode",
+      "target",
+      "skill_pattern",
+    ]);
     if (stored.target && !els.targetInput.value) {
       els.targetInput.value = stored.target;
     }
-  } catch {}
-  els.nextBtn.disabled = !els.targetInput.value.trim();
+    if (stored.skill_pattern) {
+      els.skillSelect.value = stored.skill_pattern;
+    }
+    if (stored.mode && ["company", "skill", "improve"].includes(stored.mode)) {
+      setMode(stored.mode);
+    } else {
+      setMode("company");
+    }
+  } catch {
+    setMode("company");
+  }
+  updateNextEnabled();
 }
 
 function setTargetStatus(text, { isError = false } = {}) {
@@ -315,35 +434,64 @@ function renderNextResult(body) {
 }
 
 async function requestNext() {
-  const raw = els.targetInput.value.trim();
-  const target = normalizeCompanyClient(raw);
-  if (!target) return;
-  try {
-    await chrome.storage.local.set({ target });
-  } catch {}
+  let url;
+  let lookupMsg;
+
+  if (currentMode === "company") {
+    const raw = els.targetInput.value.trim();
+    const target = normalizeCompanyClient(raw);
+    if (!target) return;
+    try {
+      await chrome.storage.local.set({ target });
+    } catch {}
+    url = `${SERVICE_BASE}/next?target=${encodeURIComponent(target)}&auto_ingest=true`;
+    lookupMsg = "Looking up… (may auto-ingest if not in DB; ~5–30s on first hit)";
+  } else if (currentMode === "skill") {
+    const pat = els.skillSelect.value;
+    if (!pat) return;
+    try {
+      await chrome.storage.local.set({ skill_pattern: pat });
+    } catch {}
+    url = `${SERVICE_BASE}/next?mode=skill&pattern=${encodeURIComponent(pat)}`;
+    lookupMsg = `Picking from problems tagged with '${pat}'…`;
+  } else if (currentMode === "improve") {
+    url = `${SERVICE_BASE}/next?mode=improve`;
+    lookupMsg = "Auto-targeting your weakest pattern…";
+  } else {
+    return;
+  }
+
   els.nextBtn.disabled = true;
   els.nextResult.hidden = true;
-  setTargetStatus("Looking up… (may auto-ingest if not in DB; ~5–30s on first hit)");
+  setTargetStatus(lookupMsg);
   try {
-    const r = await fetch(
-      `${SERVICE_BASE}/next?target=${encodeURIComponent(target)}&auto_ingest=true`,
-    );
+    const r = await fetch(url);
     if (!r.ok) {
       const detail = await r.text();
       throw new Error(`HTTP ${r.status}: ${detail}`);
     }
     const body = await r.json();
-    setTargetStatus(
-      body.cold_start_used
-        ? `target pool: ${body.target_pool_size} (cold-start expansion engaged)`
-        : `target pool: ${body.target_pool_size}`,
-    );
+    if (body.mode === "company") {
+      setTargetStatus(
+        body.cold_start_used
+          ? `target pool: ${body.target_pool_size} (cold-start expansion engaged)`
+          : `target pool: ${body.target_pool_size}`,
+      );
+    } else {
+      const eloMsg =
+        body.pattern_elo != null
+          ? ` (your Elo: ${Math.round(body.pattern_elo)})`
+          : "";
+      setTargetStatus(
+        `pattern '${body.pattern}'${eloMsg} · pool size ${body.target_pool_size}`,
+      );
+    }
     renderNextResult(body);
     refreshTargets();
   } catch (err) {
     setTargetStatus(err.message || String(err), { isError: true });
   } finally {
-    els.nextBtn.disabled = !els.targetInput.value.trim();
+    updateNextEnabled();
   }
 }
 
@@ -599,7 +747,7 @@ async function requestHint(level) {
     const r = await fetch(`${SERVICE_BASE}/hint`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug: currentProblem.slug, level }),
+      body: JSON.stringify({ slug: currentProblem.slug, level, model: HINT_MODEL }),
     });
     if (!r.ok) {
       const detail = await r.text();
@@ -670,14 +818,16 @@ els.reviewBtn.addEventListener("click", requestReview);
 els.mockBtn.addEventListener("click", requestMock);
 
 els.nextBtn.addEventListener("click", requestNext);
-els.targetInput.addEventListener("input", () => {
-  els.nextBtn.disabled = !els.targetInput.value.trim();
-});
+els.targetInput.addEventListener("input", updateNextEnabled);
 els.targetInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && els.targetInput.value.trim()) {
     e.preventDefault();
     requestNext();
   }
+});
+els.skillSelect.addEventListener("change", updateNextEnabled);
+els.modeTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setMode(tab.dataset.mode));
 });
 
 document.querySelectorAll('input[name="outcome"]').forEach((r) => {

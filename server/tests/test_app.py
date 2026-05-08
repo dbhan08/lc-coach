@@ -58,6 +58,17 @@ def test_hint_invalid_level_422(tmp_db):
     assert r.status_code == 422
 
 
+def test_hint_level_4_accepted_as_decompose(tmp_db, monkeypatch):
+    from lc_coach import app as app_mod
+
+    monkeypatch.setattr(app_mod, "claude_p", lambda p, **kw: "step 1...")
+    with _client(tmp_db) as c:
+        _register_problem(c)
+        r = c.post("/hint", json={"slug": "two-sum", "level": 4})
+    assert r.status_code == 200
+    assert r.json()["level"] == 4
+
+
 def _register_problem(client):
     return client.post(
         "/problems",
@@ -226,3 +237,108 @@ def test_mock_unknown_problem_404(tmp_db):
     with _client(tmp_db) as c:
         r = c.post("/mock", json={"slug": "ghost"})
     assert r.status_code == 404
+
+
+def _ingest_some_data(c):
+    """Plant a tiny set of company_problems + problem stubs for skill-mode tests."""
+    # Manually call the DB layer through the API would require a real /ingest;
+    # easier: drive the underlying helpers directly via a tiny POST-friendly
+    # path by re-using /problems for each.
+    for slug, title, diff, tags in [
+        ("two-sum", "Two Sum", "Easy", ["Array", "Hash Table"]),
+        ("group-anagrams", "Group Anagrams", "Medium", ["Hash Table", "String"]),
+        ("valid-anagram", "Valid Anagram", "Easy", ["Hash Table"]),
+        ("course-schedule", "Course Schedule", "Medium", ["Topological Sort", "Graph"]),
+        ("alien-dictionary", "Alien Dictionary", "Hard", ["Topological Sort"]),
+    ]:
+        c.post(
+            "/problems",
+            json={
+                "slug": slug,
+                "title": title,
+                "statement": "...",
+                "difficulty": diff,
+                "tags": tags,
+            },
+        )
+
+
+def test_skill_mode_returns_problem(tmp_db):
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        r = c.get("/next", params={"mode": "skill", "pattern": "hashing"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "skill"
+    assert body["pattern"] == "hashing"
+    # All three hashing-tagged problems are candidates; pool size reflects that
+    assert body["target_pool_size"] >= 3
+    assert body["slug"] in {"two-sum", "group-anagrams", "valid-anagram"}
+
+
+def test_skill_mode_requires_pattern(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.get("/next", params={"mode": "skill"})
+    assert r.status_code == 400
+
+
+def test_skill_mode_unknown_pattern_404(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.get("/next", params={"mode": "skill", "pattern": "made-up-pattern"})
+    assert r.status_code == 404
+
+
+def test_unknown_mode_400(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.get("/next", params={"mode": "garbage", "target": "apple"})
+    assert r.status_code == 400
+
+
+def test_company_mode_requires_target_when_no_target(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.get("/next", params={"mode": "company"})
+    assert r.status_code == 400
+
+
+def test_improve_mode_falls_back_with_no_attempts(tmp_db):
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        r = c.get("/next", params={"mode": "improve"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "improve"
+    # No attempts → fallback to 'hashing' warmup
+    assert body["pattern"] == "hashing"
+    assert "no attempts yet" in body["rationale"]
+
+
+def test_improve_mode_targets_weakest_with_attempts(tmp_db, monkeypatch):
+    from lc_coach import app as app_mod
+
+    monkeypatch.setattr(app_mod, "claude_p", lambda p, **kw: "x")
+
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        # Bomb topological-sort by getting stuck on Alien Dictionary (tagged
+        # ONLY with topological-sort, not graph — so the drop is unambiguous).
+        a = c.post("/attempts/start", json={"slug": "alien-dictionary"}).json()
+        c.post(
+            "/attempts/done",
+            json={"attempt_id": a["id"], "outcome": "stuck"},
+        )
+
+        # Solve a hashing problem cleanly to push hashing UP (so it isn't the weakest).
+        a2 = c.post("/attempts/start", json={"slug": "two-sum"}).json()
+        c.post(
+            "/attempts/done",
+            json={"attempt_id": a2["id"], "outcome": "solved"},
+        )
+
+        r = c.get("/next", params={"mode": "improve"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "improve"
+    # Topological-sort is the only attempted pattern that dropped, so improve
+    # mode targets it.
+    assert body["pattern"] == "topological-sort"
+    assert body["slug"] in {"course-schedule", "alien-dictionary"}

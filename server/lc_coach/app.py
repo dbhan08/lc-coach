@@ -23,6 +23,7 @@ from lc_coach.recommend import (
     expand_pool,
     needs_cold_start,
     pick_next,
+    pick_skill_next,
     rank_similar,
 )
 
@@ -74,8 +75,8 @@ def create_app() -> FastAPI:
 
     @app.post("/hint", response_model=HintOut)
     def hint(body: HintIn) -> HintOut:
-        if body.level not in (1, 2, 3):
-            raise HTTPException(status_code=400, detail="level must be 1, 2, or 3")
+        if body.level not in (1, 2, 3, 4):
+            raise HTTPException(status_code=400, detail="level must be 1, 2, 3, or 4")
         with db.connect() as conn:
             problem = db.get_problem(conn, body.slug)
             if problem is None:
@@ -268,10 +269,26 @@ def create_app() -> FastAPI:
 
     @app.get("/next", response_model=NextOut)
     def next_problem(
-        target: str,
+        target: Optional[str] = None,
+        mode: str = "company",
+        pattern: Optional[str] = None,
         auto_ingest: bool = True,
         k_similar: int = 5,
     ) -> NextOut:
+        mode = (mode or "company").strip().lower()
+        if mode == "skill":
+            if not pattern:
+                raise HTTPException(
+                    status_code=400, detail="skill mode requires `pattern`"
+                )
+            return _next_skill(pattern.strip().lower())
+        if mode == "improve":
+            return _next_improve()
+        if mode != "company":
+            raise HTTPException(status_code=400, detail=f"unknown mode: {mode!r}")
+
+        if not target:
+            raise HTTPException(status_code=400, detail="company mode requires `target`")
         canonical = normalize_company(target)
         if not canonical:
             raise HTTPException(status_code=400, detail="empty target")
@@ -366,6 +383,132 @@ def create_app() -> FastAPI:
                 for p, s in ranked_similar
             ],
             user_weak_patterns=weak_patterns,
+            mode="company",
+        )
+
+    def _next_skill(pattern_name: str) -> NextOut:
+        from lc_coach.mastery import COARSE_PATTERNS
+
+        if pattern_name not in COARSE_PATTERNS:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"unknown pattern '{pattern_name}'. "
+                    f"Valid: {', '.join(COARSE_PATTERNS)}"
+                ),
+            )
+        with db.connect() as conn:
+            candidates = db.get_problems_by_pattern(conn, pattern_name, limit=200)
+            pattern_elo = db.get_pattern_elo(conn, pattern_name)
+            due_rows = db.get_due_problems(conn, limit=1000)
+            due_slugs = {r["problem_slug"] for r in due_rows}
+            recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
+
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no problems tagged with '{pattern_name}' in the DB. "
+                    "Run /ingest to populate."
+                ),
+            )
+
+        chosen = pick_skill_next(
+            candidates,
+            pattern_elo=pattern_elo,
+            due_slugs=due_slugs,
+            recent_slugs=recent_slugs,
+            pattern_name=pattern_name,
+        )
+        if chosen is None:
+            raise HTTPException(status_code=404, detail="no candidates")
+
+        return NextOut(
+            slug=chosen.slug,
+            title=chosen.title,
+            difficulty=chosen.difficulty,
+            leetcode_url=f"https://leetcode.com/problems/{chosen.slug}/",
+            score=chosen.score,
+            from_company="(skill mode)",
+            rationale=" · ".join(chosen.rationale_parts),
+            cold_start_used=False,
+            target=pattern_name,
+            target_pool_size=len(candidates),
+            similar_companies=[],
+            user_weak_patterns=[],
+            mode="skill",
+            pattern=pattern_name,
+            pattern_elo=pattern_elo,
+        )
+
+    def _next_improve() -> NextOut:
+        with db.connect() as conn:
+            weakest = db.get_weakest_patterns(conn, n=1, attempted_only=True)
+            if not weakest:
+                # cold start: no attempts yet — fall back to a sensible warmup
+                # pattern at the user's default Elo.
+                fallback = "hashing"
+                from lc_coach.mastery import INITIAL_PATTERN_ELO
+                pattern_elo = INITIAL_PATTERN_ELO
+                pattern_name = fallback
+                fallback_msg = (
+                    f"no attempts yet — defaulting to '{fallback}' as a warmup pattern"
+                )
+            else:
+                row = weakest[0]
+                pattern_name = row["name"]
+                pattern_elo = float(row["elo"]) if row.get("elo") is not None else 1200.0
+                fallback_msg = None
+
+            candidates = db.get_problems_by_pattern(conn, pattern_name, limit=200)
+            due_rows = db.get_due_problems(conn, limit=1000)
+            due_slugs = {r["problem_slug"] for r in due_rows}
+            recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
+
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no problems tagged with '{pattern_name}' in the DB. "
+                    "Run /ingest to populate."
+                ),
+            )
+
+        chosen = pick_skill_next(
+            candidates,
+            pattern_elo=pattern_elo,
+            due_slugs=due_slugs,
+            recent_slugs=recent_slugs,
+            pattern_name=pattern_name,
+        )
+        if chosen is None:
+            raise HTTPException(status_code=404, detail="no candidates")
+
+        rationale = " · ".join(chosen.rationale_parts)
+        if fallback_msg:
+            rationale = fallback_msg + " · " + rationale
+        else:
+            rationale = (
+                f"improve mode: targeting your weakest pattern '{pattern_name}' "
+                f"(Elo {pattern_elo:.0f}) · " + rationale
+            )
+
+        return NextOut(
+            slug=chosen.slug,
+            title=chosen.title,
+            difficulty=chosen.difficulty,
+            leetcode_url=f"https://leetcode.com/problems/{chosen.slug}/",
+            score=chosen.score,
+            from_company="(improve mode)",
+            rationale=rationale,
+            cold_start_used=False,
+            target=pattern_name,
+            target_pool_size=len(candidates),
+            similar_companies=[],
+            user_weak_patterns=[pattern_name],
+            mode="improve",
+            pattern=pattern_name,
+            pattern_elo=pattern_elo,
         )
 
     return app
@@ -393,7 +536,7 @@ class ProblemOut(BaseModel):
 
 class HintIn(BaseModel):
     slug: str
-    level: int = Field(..., ge=1, le=3)
+    level: int = Field(..., ge=1, le=4)
     model: Optional[str] = None
 
 
@@ -538,6 +681,9 @@ class NextOut(BaseModel):
     target_pool_size: int
     similar_companies: list[SimilarCompany] = Field(default_factory=list)
     user_weak_patterns: list[str] = Field(default_factory=list)
+    mode: str = "company"
+    pattern: Optional[str] = None
+    pattern_elo: Optional[float] = None
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`
