@@ -204,6 +204,24 @@ def create_app() -> FastAPI:
             rows = db.get_due_problems(conn, limit=limit)
         return [DueRow(**r) for r in rows]
 
+    @app.post("/problems/{slug}/premium", response_model=PremiumOut)
+    def mark_premium_endpoint(slug: str) -> PremiumOut:
+        with db.connect() as conn:
+            db.mark_premium(conn, slug)
+        return PremiumOut(slug=slug, marked=True)
+
+    @app.delete("/problems/{slug}/premium", response_model=PremiumOut)
+    def unmark_premium_endpoint(slug: str) -> PremiumOut:
+        with db.connect() as conn:
+            db.unmark_premium(conn, slug)
+        return PremiumOut(slug=slug, marked=False)
+
+    @app.get("/premium", response_model=list[PremiumRow])
+    def list_premium() -> list[PremiumRow]:
+        with db.connect() as conn:
+            rows = db.list_premium_slugs(conn)
+        return [PremiumRow(**r) for r in rows]
+
     @app.post("/review", response_model=ReviewCodeOut)
     def review_code(body: ReviewCodeIn) -> ReviewCodeOut:
         with db.connect() as conn:
@@ -349,6 +367,7 @@ def create_app() -> FastAPI:
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
             weak_patterns = db.get_weakest_pattern_names(conn, n=3)
+            premium_slugs = db.get_premium_slugs(conn)
 
         chosen = pick_next(
             pool,
@@ -357,6 +376,7 @@ def create_app() -> FastAPI:
             recent_slugs=recent_slugs,
             user_weak_patterns=weak_patterns,
             target_name=canonical,
+            premium_slugs=premium_slugs,
         )
         if chosen is None:
             raise HTTPException(
@@ -403,6 +423,7 @@ def create_app() -> FastAPI:
             due_rows = db.get_due_problems(conn, limit=1000)
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
+            premium_slugs = db.get_premium_slugs(conn)
 
         if not candidates:
             raise HTTPException(
@@ -419,9 +440,16 @@ def create_app() -> FastAPI:
             due_slugs=due_slugs,
             recent_slugs=recent_slugs,
             pattern_name=pattern_name,
+            premium_slugs=premium_slugs,
         )
         if chosen is None:
-            raise HTTPException(status_code=404, detail="no candidates")
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no non-premium candidates for pattern '{pattern_name}'. "
+                    "All matches are flagged premium."
+                ),
+            )
 
         return NextOut(
             slug=chosen.slug,
@@ -464,6 +492,7 @@ def create_app() -> FastAPI:
             due_rows = db.get_due_problems(conn, limit=1000)
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
+            premium_slugs = db.get_premium_slugs(conn)
 
         if not candidates:
             raise HTTPException(
@@ -480,9 +509,15 @@ def create_app() -> FastAPI:
             due_slugs=due_slugs,
             recent_slugs=recent_slugs,
             pattern_name=pattern_name,
+            premium_slugs=premium_slugs,
         )
         if chosen is None:
-            raise HTTPException(status_code=404, detail="no candidates")
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no non-premium candidates for pattern '{pattern_name}'."
+                ),
+            )
 
         rationale = " · ".join(chosen.rationale_parts)
         if fallback_msg:
@@ -684,6 +719,16 @@ class NextOut(BaseModel):
     mode: str = "company"
     pattern: Optional[str] = None
     pattern_elo: Optional[float] = None
+
+
+class PremiumOut(BaseModel):
+    slug: str
+    marked: bool
+
+
+class PremiumRow(BaseModel):
+    slug: str
+    marked_at: str
 
 
 # Module-level instance for `uvicorn lc_coach.app:app`

@@ -237,6 +237,12 @@ def score_candidate(
     )
 
 
+def _filter_premium(pool: list, *, premium_slugs: set[str]) -> list:
+    """Premium-only LeetCode problems are unconditional skips — the user
+    can't actually open them, so there's no fallback for premium."""
+    return [e for e in pool if e.slug not in premium_slugs]
+
+
 def _hard_filter_recent(
     pool: list, *, recent_slugs: set[str], due_slugs: set[str]
 ) -> tuple[list, bool]:
@@ -261,9 +267,15 @@ def pick_next(
     recent_slugs: set[str],
     user_weak_patterns: list[str],
     target_name: str,
+    premium_slugs: Optional[set[str]] = None,
 ) -> Optional[CandidateScore]:
     if not pool:
         return None
+
+    if premium_slugs:
+        pool = _filter_premium(pool, premium_slugs=premium_slugs)
+        if not pool:
+            return None
 
     filtered, fallback = _hard_filter_recent(
         pool, recent_slugs=recent_slugs, due_slugs=due_slugs
@@ -376,9 +388,15 @@ def pick_skill_next(
     due_slugs: set[str],
     recent_slugs: set[str],
     pattern_name: str,
+    premium_slugs: Optional[set[str]] = None,
 ) -> Optional[SkillCandidate]:
     if not candidates:
         return None
+
+    if premium_slugs:
+        candidates = _filter_premium(candidates, premium_slugs=premium_slugs)
+        if not candidates:
+            return None
 
     filtered, fallback = _hard_filter_recent(
         candidates, recent_slugs=recent_slugs, due_slugs=due_slugs

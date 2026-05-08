@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS reviews (
     FOREIGN KEY (problem_slug) REFERENCES problems(slug)
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_due ON reviews(due_date);
+
+CREATE TABLE IF NOT EXISTS premium_slugs (
+    slug TEXT PRIMARY KEY,
+    marked_at TEXT NOT NULL
+);
 """
 
 VALID_OUTCOMES = ("solved", "partial", "stuck")
@@ -882,3 +887,31 @@ def get_pattern_id_by_name(
     conn: sqlite3.Connection, name: str
 ) -> Optional[int]:
     return _pattern_id(conn, name)
+
+
+# --- Premium-only LeetCode problems (user-marked) -------------------------
+
+
+def mark_premium(conn: sqlite3.Connection, slug: str) -> None:
+    """Idempotent: flag a slug as premium-only so the recommender never
+    surfaces it again."""
+    conn.execute(
+        "INSERT OR IGNORE INTO premium_slugs (slug, marked_at) VALUES (?, ?)",
+        (slug, _now_iso()),
+    )
+
+
+def unmark_premium(conn: sqlite3.Connection, slug: str) -> None:
+    conn.execute("DELETE FROM premium_slugs WHERE slug = ?", (slug,))
+
+
+def get_premium_slugs(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT slug FROM premium_slugs").fetchall()
+    return {r[0] for r in rows}
+
+
+def list_premium_slugs(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT slug, marked_at FROM premium_slugs ORDER BY marked_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]

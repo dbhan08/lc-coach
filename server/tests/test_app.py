@@ -312,6 +312,51 @@ def test_improve_mode_falls_back_with_no_attempts(tmp_db):
     assert "no attempts yet" in body["rationale"]
 
 
+def test_premium_mark_unmark_roundtrip(tmp_db):
+    with _client(tmp_db) as c:
+        _register_problem(c)
+        # Initially empty
+        assert c.get("/premium").json() == []
+
+        r = c.post("/problems/two-sum/premium")
+        assert r.status_code == 200
+        assert r.json() == {"slug": "two-sum", "marked": True}
+
+        listed = c.get("/premium").json()
+        assert len(listed) == 1 and listed[0]["slug"] == "two-sum"
+
+        # Idempotent re-mark
+        c.post("/problems/two-sum/premium")
+        assert len(c.get("/premium").json()) == 1
+
+        r = c.delete("/problems/two-sum/premium")
+        assert r.json() == {"slug": "two-sum", "marked": False}
+        assert c.get("/premium").json() == []
+
+
+def test_company_mode_skips_premium_slugs(tmp_db):
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        # Mark valid-anagram premium so the recommender should never pick it
+        c.post("/problems/valid-anagram/premium")
+        # Try /next a few times for hashing skill; valid-anagram should never appear
+        for _ in range(8):
+            r = c.get("/next", params={"mode": "skill", "pattern": "hashing"})
+            assert r.status_code == 200, r.text
+            assert r.json()["slug"] != "valid-anagram"
+
+
+def test_company_mode_returns_404_when_all_premium(tmp_db):
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        # Mark every hashing-tagged problem premium
+        for slug in ("two-sum", "group-anagrams", "valid-anagram"):
+            c.post(f"/problems/{slug}/premium")
+        r = c.get("/next", params={"mode": "skill", "pattern": "hashing"})
+    assert r.status_code == 404
+    assert "premium" in r.json()["detail"].lower()
+
+
 def test_improve_mode_targets_weakest_with_attempts(tmp_db, monkeypatch):
     from lc_coach import app as app_mod
 

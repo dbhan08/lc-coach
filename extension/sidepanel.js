@@ -100,6 +100,7 @@ const els = {
   nextDifficulty: document.getElementById("next-difficulty"),
   nextRationale: document.getElementById("next-rationale"),
   nextSimilar: document.getElementById("next-similar"),
+  skipPremiumBtn: document.getElementById("skip-premium-btn"),
   modeTabs: document.querySelectorAll(".mode-tab"),
   inputCompany: document.getElementById("target-input-company"),
   inputSkill: document.getElementById("target-input-skill"),
@@ -108,6 +109,7 @@ const els = {
 };
 
 let currentMode = "company"; // "company" | "skill" | "improve"
+let lastRecommendedSlug = null;
 
 let currentProblem = null;
 let activeAttempt = null; // null | { id, started_at, ... }
@@ -431,6 +433,30 @@ function renderNextResult(body) {
   } else {
     els.nextSimilar.textContent = "";
   }
+  lastRecommendedSlug = body.slug;
+  els.skipPremiumBtn.disabled = false;
+  els.skipPremiumBtn.textContent = "Premium-locked → skip";
+}
+
+async function skipAsPremium() {
+  if (!lastRecommendedSlug) return;
+  const slug = lastRecommendedSlug;
+  els.skipPremiumBtn.disabled = true;
+  els.skipPremiumBtn.textContent = `marking '${slug}' premium…`;
+  try {
+    const r = await fetch(
+      `${SERVICE_BASE}/problems/${encodeURIComponent(slug)}/premium`,
+      { method: "POST" },
+    );
+    if (!r.ok) throw new Error(`mark failed: ${r.status} ${await r.text()}`);
+  } catch (err) {
+    setTargetStatus(`couldn't mark premium: ${err.message}`, { isError: true });
+    els.skipPremiumBtn.disabled = false;
+    els.skipPremiumBtn.textContent = "Premium-locked → skip";
+    return;
+  }
+  // Re-fetch a recommendation with the same mode/inputs.
+  await requestNext();
 }
 
 async function requestNext() {
@@ -818,6 +844,7 @@ els.reviewBtn.addEventListener("click", requestReview);
 els.mockBtn.addEventListener("click", requestMock);
 
 els.nextBtn.addEventListener("click", requestNext);
+els.skipPremiumBtn.addEventListener("click", skipAsPremium);
 els.targetInput.addEventListener("input", updateNextEnabled);
 els.targetInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && els.targetInput.value.trim()) {
