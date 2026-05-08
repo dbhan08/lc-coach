@@ -139,6 +139,36 @@ def test_review_template_handles_no_code():
     assert "language: unspecified" in prompt
 
 
+def test_complexity_template_required_fields():
+    prompt = coach.build_complexity_prompt(
+        title="Two Sum",
+        statement="Given an array...",
+        difficulty="Easy",
+        code="for i in range(len(nums)): ...",
+        language="python",
+    )
+    assert "Time: O(" in prompt
+    assert "Space: O(" in prompt
+    # The reviewer must not write a better solution
+    assert "DO NOT write better code" in prompt or "DO NOT write code" in prompt
+    # And must not name the optimal algorithm
+    assert "DO NOT reveal the optimal algorithm by name" in prompt
+    # The candidate's code round-trips into the prompt
+    assert "for i in range(len(nums)):" in prompt
+
+
+def test_complexity_template_handles_no_code():
+    prompt = coach.build_complexity_prompt(
+        title="X",
+        statement="...",
+        difficulty="Easy",
+        code="",
+        language=None,
+    )
+    assert "(no code provided)" in prompt
+    assert "language: unspecified" in prompt
+
+
 def test_mock_template_full_contract_present():
     prompt = coach.build_mock_prompt(
         title="Two Sum", statement="Given an array...", difficulty="Easy"

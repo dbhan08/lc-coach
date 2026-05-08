@@ -135,3 +135,21 @@ def build_mock_prompt(
         difficulty=difficulty or "unknown",
         statement=statement.strip(),
     )
+
+
+def build_complexity_prompt(
+    *,
+    title: str,
+    statement: str,
+    difficulty: Optional[str],
+    code: str,
+    language: Optional[str] = None,
+) -> str:
+    template = _load_template("complexity.txt")
+    return template.format(
+        title=title,
+        difficulty=difficulty or "unknown",
+        statement=statement.strip(),
+        language=(language or "unspecified").strip(),
+        code=code.strip() or "(no code provided)",
+    )

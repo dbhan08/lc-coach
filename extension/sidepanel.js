@@ -8,8 +8,10 @@ const SERVICE_BASE = "http://127.0.0.1:8765";
 
 // Hints are short, contract-driven, and time-sensitive — use Haiku for ~3–5×
 // faster responses. Review and mock keep the default model (Sonnet) where
-// depth matters more than latency.
+// depth matters more than latency. Complexity is also short + structured
+// so Haiku is a fine match.
 const HINT_MODEL = "claude-haiku-4-5-20251001";
+const COMPLEXITY_MODEL = "claude-haiku-4-5-20251001";
 
 // --- Tiny markdown renderer ----------------------------------------------
 // Handles the subset Claude actually emits in our prompts: **bold**,
@@ -69,6 +71,7 @@ const els = {
   problemTags: document.getElementById("problem-tags"),
   hintOutput: document.getElementById("hint-output"),
   reviewBtn: document.getElementById("review-btn"),
+  complexityBtn: document.getElementById("complexity-btn"),
   mockBtn: document.getElementById("mock-btn"),
   errorCard: document.getElementById("error-card"),
   errorMessage: document.getElementById("error-message"),
@@ -728,6 +731,7 @@ async function requestReview() {
   inflightHint = true;
   clearError();
   els.reviewBtn.disabled = true;
+  els.complexityBtn.disabled = true;
   els.mockBtn.disabled = true;
   setHintOutput(null, { withSpinner: true });
   try {
@@ -759,6 +763,54 @@ async function requestReview() {
   } finally {
     inflightHint = false;
     els.reviewBtn.disabled = false;
+    els.complexityBtn.disabled = false;
+    els.mockBtn.disabled = false;
+  }
+}
+
+async function requestComplexity() {
+  if (!currentProblem || !currentProblem.slug) {
+    showError("No problem loaded.");
+    return;
+  }
+  if (inflightHint) return;
+  inflightHint = true;
+  clearError();
+  els.reviewBtn.disabled = true;
+  els.complexityBtn.disabled = true;
+  els.mockBtn.disabled = true;
+  setHintOutput(null, { withSpinner: true });
+  try {
+    await postProblemToService(currentProblem);
+    const codeResult = await getMonacoCode();
+    const code = codeResult?.value || "";
+    if (!code) {
+      throw new Error(
+        "Couldn't read your code from the editor — make sure the LeetCode tab is the active one.",
+      );
+    }
+    const r = await fetch(`${SERVICE_BASE}/complexity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slug: currentProblem.slug,
+        code,
+        language: null,
+        model: COMPLEXITY_MODEL,
+      }),
+    });
+    if (!r.ok) {
+      throw new Error(`POST /complexity failed: ${r.status} ${await r.text()}`);
+    }
+    const body = await r.json();
+    setHintOutput(`[complexity · ${code.length} chars submitted]\n\n${body.response}`);
+  } catch (err) {
+    showError(err.message || String(err));
+    setHintOutput(null);
+  } finally {
+    inflightHint = false;
+    els.reviewBtn.disabled = false;
+    els.complexityBtn.disabled = false;
     els.mockBtn.disabled = false;
   }
 }
@@ -772,6 +824,7 @@ async function requestMock() {
   inflightHint = true;
   clearError();
   els.reviewBtn.disabled = true;
+  els.complexityBtn.disabled = true;
   els.mockBtn.disabled = true;
   setHintOutput(null, { withSpinner: true });
   try {
@@ -792,6 +845,7 @@ async function requestMock() {
   } finally {
     inflightHint = false;
     els.reviewBtn.disabled = false;
+    els.complexityBtn.disabled = false;
     els.mockBtn.disabled = false;
   }
 }
@@ -879,6 +933,7 @@ els.cancelOutcomeBtn.addEventListener("click", () => renderAttemptState());
 els.submitOutcomeBtn.addEventListener("click", submitOutcome);
 
 els.reviewBtn.addEventListener("click", requestReview);
+els.complexityBtn.addEventListener("click", requestComplexity);
 els.mockBtn.addEventListener("click", requestMock);
 
 els.nextBtn.addEventListener("click", requestNext);

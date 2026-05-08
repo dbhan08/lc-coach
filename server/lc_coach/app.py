@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from lc_coach import db
 from lc_coach.coach import (
     CoachError,
+    build_complexity_prompt,
     build_hint_prompt,
     build_mock_prompt,
     build_review_prompt,
@@ -243,6 +244,28 @@ def create_app() -> FastAPI:
         except CoachError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return ReviewCodeOut(slug=body.slug, response=response_text)
+
+    @app.post("/complexity", response_model=ComplexityOut)
+    def complexity_check(body: ComplexityIn) -> ComplexityOut:
+        with db.connect() as conn:
+            problem = db.get_problem(conn, body.slug)
+        if problem is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"problem '{body.slug}' not registered; POST /problems first",
+            )
+        prompt = build_complexity_prompt(
+            title=problem["title"],
+            statement=problem["statement"],
+            difficulty=problem.get("difficulty"),
+            code=body.code,
+            language=body.language,
+        )
+        try:
+            response_text = claude_p(prompt, model=body.model)
+        except CoachError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return ComplexityOut(slug=body.slug, response=response_text)
 
     @app.post("/mock", response_model=MockOut)
     def mock_interview(body: MockIn) -> MockOut:
@@ -712,6 +735,18 @@ class MockIn(BaseModel):
 
 
 class MockOut(BaseModel):
+    slug: str
+    response: str
+
+
+class ComplexityIn(BaseModel):
+    slug: str
+    code: str
+    language: Optional[str] = None
+    model: Optional[str] = None
+
+
+class ComplexityOut(BaseModel):
     slug: str
     response: str
 

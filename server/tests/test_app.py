@@ -239,6 +239,42 @@ def test_mock_unknown_problem_404(tmp_db):
     assert r.status_code == 404
 
 
+def test_complexity_round_trip(tmp_db, monkeypatch):
+    from lc_coach import app as app_mod
+
+    captured = {}
+
+    def fake_claude_p(prompt, **kw):
+        captured["prompt"] = prompt
+        return "Time: O(n²) — nested loops over the array.\nSpace: O(1) — no extra structures."
+
+    monkeypatch.setattr(app_mod, "claude_p", fake_claude_p)
+
+    with _client(tmp_db) as c:
+        _register_problem(c)
+        r = c.post(
+            "/complexity",
+            json={
+                "slug": "two-sum",
+                "code": "for i in range(len(nums)):\n    for j in range(i+1, len(nums)): ...",
+                "language": "python",
+            },
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["slug"] == "two-sum"
+    assert "Time:" in body["response"]
+    assert "Space:" in body["response"]
+    # Code round-tripped into the prompt that was sent to claude
+    assert "for j in range(i+1" in captured["prompt"]
+
+
+def test_complexity_unknown_problem_404(tmp_db):
+    with _client(tmp_db) as c:
+        r = c.post("/complexity", json={"slug": "ghost", "code": "x = 1"})
+    assert r.status_code == 404
+
+
 def _ingest_some_data(c):
     """Plant a tiny set of company_problems + problem stubs for skill-mode tests."""
     # Manually call the DB layer through the API would require a real /ingest;

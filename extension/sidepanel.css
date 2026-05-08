@@ -389,8 +389,8 @@ footer {
 
 .coach-buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
   margin: 6px 0 10px;
 }
 .coach-btn {
