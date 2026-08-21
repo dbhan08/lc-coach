@@ -308,6 +308,18 @@ def create_app() -> FastAPI:
             for other, score in ranked
         ]
 
+    def _drop_excluded(entries: list, exclude_slugs: set[str]) -> list:
+        """Hard-remove one-shot exclusions from a candidate list.
+
+        This must not go through `recent_slugs`: the recency filter spares
+        anything that is due for review, so an excluded-but-due problem comes
+        straight back and "Show different one" ping-pongs between two due
+        problems.
+        """
+        if not exclude_slugs:
+            return entries
+        return [e for e in entries if e.slug not in exclude_slugs]
+
     @app.get("/next", response_model=NextOut)
     def next_problem(
         target: Optional[str] = None,
@@ -400,10 +412,17 @@ def create_app() -> FastAPI:
             weak_patterns = db.get_weakest_pattern_names(conn, n=3)
             premium_slugs = db.get_premium_slugs(conn)
 
-        # Treat one-shot exclusions like recent attempts: hard-filtered, but
-        # they don't persist. Don't override due_slugs since the user might
-        # legitimately want a due problem even if it appeared previously.
-        recent_slugs = recent_slugs | exclude_slugs
+        # One-shot exclusions are a hard filter on the pool. They don't
+        # persist, and they don't touch the review schedule.
+        pool = _drop_excluded(pool, exclude_slugs)
+        if not pool:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no problems left for '{canonical}' after skipping "
+                    f"{len(exclude_slugs)}. Press Next to start over."
+                ),
+            )
 
         chosen = pick_next(
             pool,
@@ -462,8 +481,6 @@ def create_app() -> FastAPI:
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
             premium_slugs = db.get_premium_slugs(conn)
-        if exclude_slugs:
-            recent_slugs = recent_slugs | exclude_slugs
 
         if not candidates:
             raise HTTPException(
@@ -471,6 +488,17 @@ def create_app() -> FastAPI:
                 detail=(
                     f"no problems tagged with '{pattern_name}' in the DB. "
                     "Run /ingest to populate."
+                ),
+            )
+
+        pool_size = len(candidates)
+        candidates = _drop_excluded(candidates, exclude_slugs or set())
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no problems left for '{pattern_name}' after skipping "
+                    f"{len(exclude_slugs or set())}. Press Next to start over."
                 ),
             )
 
@@ -501,7 +529,7 @@ def create_app() -> FastAPI:
             rationale=" · ".join(chosen.rationale_parts),
             cold_start_used=False,
             target=pattern_name,
-            target_pool_size=len(candidates),
+            target_pool_size=pool_size,
             similar_companies=[],
             user_weak_patterns=[],
             mode="skill",
@@ -533,8 +561,6 @@ def create_app() -> FastAPI:
             due_slugs = {r["problem_slug"] for r in due_rows}
             recent_slugs = db.get_recent_attempt_slugs(conn, days=7)
             premium_slugs = db.get_premium_slugs(conn)
-        if exclude_slugs:
-            recent_slugs = recent_slugs | exclude_slugs
 
         if not candidates:
             raise HTTPException(
@@ -542,6 +568,17 @@ def create_app() -> FastAPI:
                 detail=(
                     f"no problems tagged with '{pattern_name}' in the DB. "
                     "Run /ingest to populate."
+                ),
+            )
+
+        pool_size = len(candidates)
+        candidates = _drop_excluded(candidates, exclude_slugs or set())
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no problems left for '{pattern_name}' after skipping "
+                    f"{len(exclude_slugs or set())}. Press Next to start over."
                 ),
             )
 
@@ -580,7 +617,7 @@ def create_app() -> FastAPI:
             rationale=rationale,
             cold_start_used=False,
             target=pattern_name,
-            target_pool_size=len(candidates),
+            target_pool_size=pool_size,
             similar_companies=[],
             user_weak_patterns=[pattern_name],
             mode="improve",

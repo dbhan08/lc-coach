@@ -403,6 +403,59 @@ def test_skill_mode_excludes_one_shot_slugs(tmp_db):
         assert c.get("/premium").json() == []
 
 
+def test_exclude_beats_due_for_review(tmp_db):
+    """An excluded slug must stay hidden even when it is due for review.
+
+    Regression: exclusions used to be merged into `recent_slugs`, and the
+    recency filter spares anything that is due. Two due problems then
+    ping-ponged forever behind "Show different one".
+    """
+    from lc_coach import db
+
+    with _client(tmp_db) as c:
+        _ingest_some_data(c)
+        # Make every hashing problem due today.
+        with db.connect() as conn:
+            for slug in ("two-sum", "group-anagrams", "valid-anagram"):
+                conn.execute(
+                    """
+                    INSERT INTO reviews
+                      (problem_slug, ease, repetitions, interval_days,
+                       due_date, last_quality, last_reviewed_at)
+                    VALUES (?, 2.5, 1, 1, '2000-01-01', 3, '2000-01-01')
+                    ON CONFLICT(problem_slug) DO NOTHING
+                    """,
+                    (slug,),
+                )
+
+        seen = []
+        excluded = []
+        for _ in range(3):
+            params = {"mode": "skill", "pattern": "hashing"}
+            if excluded:
+                params["exclude"] = ",".join(excluded)
+            r = c.get("/next", params=params)
+            assert r.status_code == 200, r.text
+            slug = r.json()["slug"]
+            assert slug not in excluded
+            seen.append(slug)
+            excluded.append(slug)
+
+        assert len(set(seen)) == 3
+
+        # Every candidate is now excluded. The service must say so, not
+        # recycle a due problem the user already skipped.
+        r = c.get(
+            "/next",
+            params={
+                "mode": "skill",
+                "pattern": "hashing",
+                "exclude": ",".join(excluded),
+            },
+        )
+        assert r.status_code == 404, r.text
+
+
 def test_company_mode_returns_404_when_all_premium(tmp_db):
     with _client(tmp_db) as c:
         _ingest_some_data(c)
