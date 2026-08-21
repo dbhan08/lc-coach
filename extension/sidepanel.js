@@ -384,6 +384,7 @@ function normalizeCompanyClient(raw) {
 }
 
 function setMode(mode) {
+  const previousMode = currentMode;
   currentMode = mode;
   els.modeTabs.forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.mode === mode);
@@ -391,8 +392,11 @@ function setMode(mode) {
   els.inputCompany.hidden = mode !== "company";
   els.inputSkill.hidden = mode !== "skill";
   els.inputImprove.hidden = mode !== "improve";
-  // Mode change resets one-shot exclusions
-  clearExclude();
+  // A real mode change resets one-shot exclusions. Re-applying the mode
+  // already in effect must not: refreshTargets() re-applies the stored mode
+  // after every recommendation, and clearing here wiped the skip list one
+  // moment after rendering it.
+  if (mode !== previousMode) clearExclude();
   updateNextEnabled();
   try {
     chrome.storage.local.set({ mode });
