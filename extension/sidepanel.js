@@ -116,7 +116,67 @@ let currentMode = "company"; // "company" | "skill" | "improve"
 let lastRecommendedSlug = null;
 // Session-only one-shot exclusion list used by "Show different one".
 // Resets when the user changes mode, target, pattern, or hits the main Next.
+// Mirrored into chrome.storage.session because the side panel document is
+// torn down whenever the panel closes — in-memory state alone gets lost, and
+// the recommender then ping-pongs between the same two problems.
+const EXCLUDE_KEY = "exclude_state";
 let excludeSlugs = new Set();
+// Scope tag for the saved list, so a list saved for one pattern never leaks
+// into another.
+let excludeScope = "";
+// Startup restores the saved mode/target, which calls clearExclude(). Hold
+// off persisting until the boot sequence has restored the saved list, or that
+// wipes it before restoreExclude() ever reads it.
+let excludeReady = false;
+
+function currentScope() {
+  if (currentMode === "company") {
+    return `company:${normalizeCompanyClient(els.targetInput.value)}`;
+  }
+  if (currentMode === "skill") return `skill:${els.skillSelect.value}`;
+  return "improve:";
+}
+
+async function saveExclude() {
+  if (!excludeReady) return;
+  try {
+    await chrome.storage.session.set({
+      [EXCLUDE_KEY]: {
+        scope: currentScope(),
+        slugs: Array.from(excludeSlugs),
+        last: lastRecommendedSlug,
+      },
+    });
+  } catch {}
+}
+
+async function restoreExclude() {
+  try {
+    const got = await chrome.storage.session.get(EXCLUDE_KEY);
+    const saved = got?.[EXCLUDE_KEY];
+    if (saved && saved.scope === currentScope()) {
+      excludeSlugs = new Set(saved.slugs || []);
+      excludeScope = saved.scope;
+      if (!lastRecommendedSlug && saved.last) lastRecommendedSlug = saved.last;
+      updateDifferentLabel();
+    }
+  } catch {}
+}
+
+function clearExclude() {
+  excludeSlugs = new Set();
+  excludeScope = currentScope();
+  saveExclude();
+  updateDifferentLabel();
+}
+
+function updateDifferentLabel() {
+  if (!els.differentOneBtn) return;
+  els.differentOneBtn.textContent =
+    excludeSlugs.size > 0
+      ? `Show different one (${excludeSlugs.size} skipped)`
+      : "Show different one";
+}
 
 let currentProblem = null;
 let activeAttempt = null; // null | { id, started_at, ... }
@@ -332,7 +392,7 @@ function setMode(mode) {
   els.inputSkill.hidden = mode !== "skill";
   els.inputImprove.hidden = mode !== "improve";
   // Mode change resets one-shot exclusions
-  excludeSlugs = new Set();
+  clearExclude();
   updateNextEnabled();
   try {
     chrome.storage.local.set({ mode });
@@ -446,10 +506,7 @@ function renderNextResult(body) {
   els.skipPremiumBtn.disabled = false;
   els.skipPremiumBtn.textContent = "Mark Premium → skip";
   els.differentOneBtn.disabled = false;
-  els.differentOneBtn.textContent =
-    excludeSlugs.size > 0
-      ? `Show different one (${excludeSlugs.size} skipped)`
-      : "Show different one";
+  updateDifferentLabel();
 }
 
 async function skipAsPremium() {
@@ -480,13 +537,14 @@ async function skipAsPremium() {
   }
   // Marking a problem premium is itself a kind of one-shot exclusion for
   // this call; the persistent premium filter handles future ones.
-  excludeSlugs = new Set();
+  clearExclude();
   await requestNext();
 }
 
 async function requestDifferent() {
   if (!lastRecommendedSlug) return;
   excludeSlugs.add(lastRecommendedSlug);
+  await saveExclude();
   els.differentOneBtn.disabled = true;
   els.differentOneBtn.textContent = "looking…";
   await requestNext({ keepExclude: true });
@@ -495,7 +553,7 @@ async function requestDifferent() {
 async function requestNext({ keepExclude = false } = {}) {
   // The main "Next" button resets one-shot exclusions; "Show different one"
   // calls requestNext({keepExclude:true}) to preserve them across the call.
-  if (!keepExclude) excludeSlugs = new Set();
+  if (!keepExclude) clearExclude();
 
   let url;
   let lookupMsg;
@@ -940,7 +998,7 @@ els.nextBtn.addEventListener("click", requestNext);
 els.skipPremiumBtn.addEventListener("click", skipAsPremium);
 els.differentOneBtn.addEventListener("click", requestDifferent);
 els.targetInput.addEventListener("input", () => {
-  excludeSlugs = new Set(); // changing input invalidates accumulated skips
+  clearExclude(); // changing input invalidates accumulated skips
   updateNextEnabled();
 });
 els.targetInput.addEventListener("keydown", (e) => {
@@ -950,7 +1008,7 @@ els.targetInput.addEventListener("keydown", (e) => {
   }
 });
 els.skillSelect.addEventListener("change", () => {
-  excludeSlugs = new Set();
+  clearExclude();
   updateNextEnabled();
 });
 els.modeTabs.forEach((tab) => {
@@ -973,6 +1031,8 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
 (async () => {
   await pingService();
   await loadCurrentProblem();
+  await restoreExclude();
+  excludeReady = true;
   refreshMastery();
   refreshDue();
   refreshTargets();
